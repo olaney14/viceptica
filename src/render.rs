@@ -1,6 +1,7 @@
+use core::f32;
 use std::collections::HashMap;
 
-use cgmath::{point3, vec3, Deg, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
+use cgmath::{point3, vec3, Deg, ElementWise, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
 use glow::{HasContext, NativeBuffer};
 use winit::keyboard::Key;
 
@@ -16,10 +17,11 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// load shaders
+    /// load shaders, primitive meshes
     pub unsafe fn init(&mut self, programs: &mut ProgramBank, gl: &glow::Context) {
         programs.load_by_name_vf("instanced", gl).unwrap();
         programs.load_by_name_vf("flat", gl).unwrap();
+
         gl.enable(glow::DEPTH_TEST);
     }
 
@@ -102,6 +104,20 @@ impl Scene {
                         }
                         renderable_indices.push(self.static_meshes.get(name).unwrap().len() - 1);
                     }
+                },
+                Renderable::Brush(texture, position, size) => {
+                    let name = format!("Brush_{}", texture);
+                    let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
+                    if model.mobile {
+                        self.add_mobile_mesh(&name, model.transform * transform);
+                        renderable_indices.push(self.mobile_meshes.get(&name).unwrap().len() - 1);
+                    } else {
+                        self.add_static_mesh(&name, transform);
+                        if !self.static_meshes_updated.contains(&name) {
+                            self.static_meshes_updated.push(name.clone());
+                        }
+                        renderable_indices.push(self.static_meshes.get(&name).unwrap().len() - 1);
+                    }
                 }
             }
         }
@@ -118,6 +134,11 @@ impl Scene {
             match renderable {
                 Renderable::Mesh(name, transform) => {
                     self.mobile_meshes.get_mut(name).unwrap()[*index] = model.transform * transform;
+                },
+                Renderable::Brush(texture, position, size) => {
+                    let name = format!("Brush_{}", texture);
+                    let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
+                    self.mobile_meshes.get_mut(&name).unwrap()[*index] = model.transform * transform;
                 }
             }
         }
@@ -169,7 +190,13 @@ pub struct Camera {
     pub right: Vector3<f32>,
     pub view: Matrix4<f32>,
     pub projection: Matrix4<f32>,
-    pub speed: f32
+    pub speed: f32,
+    pub mouse_locked: bool,
+    pub pitch: f32,
+    pub yaw: f32,
+    pub sensitivity: f32,
+    fov: f32,
+    aspect: f32
 }
 
 impl Camera {
@@ -180,13 +207,46 @@ impl Camera {
             right: vec3(1.0, 0.0, 0.0),
             up: vec3(0.0, 1.0, 0.0),
             view: Matrix4::identity(),
-            projection: cgmath::perspective(Deg(45.0), 640.0 / 480.0, 0.1, 100.0),
-            speed: 3.5
+            projection: cgmath::perspective(Deg(80.0), 640.0 / 480.0, 0.1, 100.0),
+            speed: 3.5,
+            mouse_locked: false,
+            pitch: 0.0,
+            yaw: -f32::consts::PI / 2.0,
+            sensitivity: 0.007,
+            fov: 80.0,
+            aspect: 640.0 / 480.0
         }
     }
 
     pub fn on_window_resized(&mut self, width: f32, height: f32) {
-        self.projection = cgmath::perspective(Deg(45.0), width / height, 0.1, 100.0);
+        self.projection = cgmath::perspective(Deg(self.fov), width / height, 0.1, 100.0);
+    }
+
+    pub fn set_fov(&mut self, new_fov: f32) {
+        self.fov = new_fov;
+        self.projection = cgmath::perspective(Deg(self.fov), self.aspect, 0.1, 100.0);
+    }
+
+    fn calculate_direction(&mut self) {
+        self.direction.x = self.yaw.cos() * self.pitch.cos();
+        self.direction.y = self.pitch.sin();
+        self.direction.z = self.yaw.sin() * self.pitch.cos();
+        self.direction = self.direction.normalize();
+    }
+
+    pub fn mouse_movement(&mut self, dx: f64, dy: f64) {
+        if self.mouse_locked {
+            self.yaw += dx as f32 * self.sensitivity;
+            self.pitch += dy as f32 * self.sensitivity;
+
+            if self.pitch > (f32::consts::PI / 2.0) - 0.025 {
+                self.pitch = (f32::consts::PI / 2.0) - 0.025;
+            } else if self.pitch < (-f32::consts::PI / 2.0) + 0.025 {
+                self.pitch = (-f32::consts::PI / 2.0) + 0.025;
+            }
+
+            self.calculate_direction();
+        }
     }
 
     pub fn update(&mut self, input: &Input, delta_time: f32) {
@@ -197,10 +257,16 @@ impl Camera {
             self.pos -= self.speed * delta_time * self.direction.normalize();
         }
         if input.get_key_pressed(Key::Character("a".into())) {
-            self.pos += self.speed * delta_time * self.up.cross(self.direction).normalize();
+            self.pos += self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
         }
         if input.get_key_pressed(Key::Character("d".into())) {
-            self.pos -= self.speed * delta_time * self.up.cross(self.direction).normalize();
+            self.pos -= self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
+        }
+        if input.get_key_pressed(Key::Character("e".into())) {
+            self.pos += self.speed * delta_time * self.up.normalize();
+        }
+        if input.get_key_pressed(Key::Character("q".into())) {
+            self.pos -= self.speed * delta_time * self.up.normalize();
         }
 
         self.right = vec3(0.0, 1.0, 0.0).cross(self.direction).normalize();

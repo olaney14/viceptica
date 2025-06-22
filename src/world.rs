@@ -1,10 +1,27 @@
-use cgmath::{Matrix4, SquareMatrix};
+use cgmath::{Matrix4, SquareMatrix, Vector3};
 
-use crate::render::{self, Scene};
+use crate::{mesh::{Mesh, MeshBank}, render::{self, Scene}, texture::TextureBank};
+
+pub const BRUSH_TEXTURES: [&str; 7] = [
+    "concrete",
+    "end_sky",
+    "evilwatering",
+    "pillows_old_floor",
+    "sky",
+    "sparkle",
+    "watering"
+];
 
 pub struct World {
     models: Vec<Model>,
     pub scene: render::Scene
+}
+
+pub unsafe fn load_brushes(textures: &mut TextureBank, meshes: &mut MeshBank, gl: &glow::Context) {
+    for texture in BRUSH_TEXTURES.iter() {
+        textures.load_by_name(&texture, gl).unwrap();
+        meshes.add(Mesh::create_textured_cube(&texture, gl), &format!("Brush_{}", texture));
+    }
 }
 
 impl World {
@@ -33,7 +50,8 @@ impl World {
 
 #[derive(Clone)]
 pub enum Renderable {
-    Mesh(String, Matrix4<f32>)
+    Mesh(String, Matrix4<f32>),
+    Brush(String, Vector3<f32>, Vector3<f32>)
 }
 
 #[derive(Clone)]

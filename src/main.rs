@@ -3,7 +3,7 @@ use std::{thread, time::{Duration, Instant}};
 use cgmath::{vec3, InnerSpace, Matrix4, Rad, SquareMatrix};
 use glow::{HasContext};
 use glutin::surface::GlSurface;
-use winit::{event::{ElementState, Event, WindowEvent}, keyboard::Key, platform::modifier_supplement::KeyEventExtModifierSupplement};
+use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
 use crate::{mesh::Mesh, world::{Model, Renderable}};
 
@@ -15,7 +15,7 @@ mod shader;
 mod window;
 mod texture;
 
-const MS_PER_FRAME: u64 = 16;
+const MS_PER_FRAME: u64 = 8;
 
 fn main() {
     let (gl, gl_surface, gl_context, window, event_loop) = unsafe { window::create_gl_context() };
@@ -25,6 +25,7 @@ fn main() {
     let mut input = input::Input::new();
 
     unsafe {
+        world::load_brushes(&mut texture_bank, &mut mesh_bank, &gl);
         texture_bank.load_by_name("test", &gl).unwrap();
         texture_bank.load_by_name("magic_pixel", &gl).unwrap();
         mesh_bank.add(Mesh::create_square(0.3, 0.2, 0.1, &gl), "square");
@@ -51,13 +52,25 @@ fn main() {
         renderable_indices: Vec::new()
     };
 
+    let brushes = Model {
+        mobile: false,
+        render: vec![
+            Renderable::Brush("watering".to_string(), vec3(0.0, -5.0, 0.0), vec3(10.0, 1.0, 10.0))
+        ],
+        transform: Matrix4::identity(),
+        renderable_indices: Vec::new()
+    };
+
     let mut world = world::World::new();
     unsafe { 
         world.insert_model(square_model);
         world.insert_model(mobile);
+        world.insert_model(brushes);
         world.scene.init(&mut program_bank, &gl);
         world.scene.prepare_statics(&mut mesh_bank, &gl);
     }
+
+    let mut last_cursor_position: Option<(f64, f64)> = None;
 
     let frame_sleep_duration = Duration::from_millis(MS_PER_FRAME);
     let beginning_of_application = Instant::now();
@@ -66,7 +79,7 @@ fn main() {
 
     // https://github.com/grovesNL/glow/blob/main/examples/hello/src/main.rs
     let _ = event_loop.run(move |event, elwt| {
-        if let Event::WindowEvent { event, .. } = event {
+        if let Event::WindowEvent { ref event, .. } = event {
             match event {
                 WindowEvent::CloseRequested => {
                     elwt.exit();
@@ -76,6 +89,12 @@ fn main() {
                     elapsed_time = (beginning_of_frame - beginning_of_application).as_secs_f64();
                     let delta_time = (beginning_of_frame - last_frame).as_secs_f32();
                     last_frame = beginning_of_frame;
+
+                    if input.get_key_just_pressed(Key::Named(NamedKey::Escape)) && world.scene.camera.mouse_locked {
+                        world.scene.camera.mouse_locked = false;
+                        window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                        window.set_cursor_visible(true);
+                    }
 
                     world.scene.camera.update(&input, delta_time);
 
@@ -87,7 +106,7 @@ fn main() {
                     window.request_redraw();
 
                     gl_surface.swap_buffers(&gl_context).unwrap();
-
+                    input.update();
                     let frame_duration = Instant::now() - beginning_of_frame;
                     if let Some(duration) = frame_sleep_duration.checked_sub(frame_duration) {
                         thread::sleep(duration);
@@ -103,9 +122,40 @@ fn main() {
                         }
                     }
                 },
+                WindowEvent::MouseInput { state, button, .. } => {
+                    match state {
+                        ElementState::Pressed => {
+                            input.on_mouse_button_pressed(*button);
+                            if !world.scene.camera.mouse_locked {
+                                world.scene.camera.mouse_locked = true;
+                                window.set_cursor_grab(CursorGrabMode::Confined).unwrap();
+                                window.set_cursor_visible(false);
+                            }
+                        },
+                        ElementState::Released => {
+                            input.on_mouse_button_released(*button);
+                        }
+                    }
+                },
+                WindowEvent::CursorMoved { position, .. } => {
+                    // if let Some(last_pos) = last_cursor_position {
+                        
+                    //     last_cursor_position = Some((position.x, position.y));
+                    // } else {
+                    //     last_cursor_position = Some((position.x, position.y))
+                    // }
+                },
                 WindowEvent::Resized(new_size) => unsafe {
                     gl.viewport(0, 0, new_size.width as i32, new_size.height as i32);
                     world.scene.camera.on_window_resized(new_size.width as f32, new_size.height as f32);
+                },
+                _ => ()
+            }
+        }
+        if let Event::DeviceEvent { ref event, .. } = event {
+            match event {
+                DeviceEvent::MouseMotion { delta } => {
+                    world.scene.camera.mouse_movement(delta.0, -delta.1);
                 },
                 _ => ()
             }

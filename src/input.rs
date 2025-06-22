@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use winit::keyboard::Key;
+use winit::{event::MouseButton, keyboard::Key};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum KeyState {
@@ -12,6 +12,7 @@ pub enum KeyState {
 /// Input manager, must be updated externally with `on_key_released` and `on_key_pressed`. `update` must be called every frame.
 pub struct Input {
     pub keys: HashMap<Key, KeyState>,
+    pub mouse_buttons: HashMap<MouseButton, KeyState>,
     pub needs_update: bool
 }
 
@@ -19,6 +20,7 @@ impl Input {
     pub fn new() -> Self {
         Input {
             keys: HashMap::new(),
+            mouse_buttons: HashMap::new(),
             needs_update: false
         }
     }
@@ -34,10 +36,24 @@ impl Input {
         self.keys.insert(key, KeyState::Released);
     }
 
+    pub fn on_mouse_button_pressed(&mut self, button: MouseButton) {
+        self.mouse_buttons.insert(button, KeyState::JustPressed);
+        self.needs_update = true;
+    }
+
+    pub fn on_mouse_button_released(&mut self, button: MouseButton) {
+        self.mouse_buttons.insert(button, KeyState::Released);
+    }
+
     /// Call every frame after this struct is done being used, resets `JustPressed` keystates to `Pressed`
     pub fn update(&mut self) {
         if self.needs_update {
             for (_, state) in self.keys.iter_mut() {
+                if *state == KeyState::JustPressed {
+                    *state = KeyState::Pressed;
+                }
+            }
+            for (_, state) in self.mouse_buttons.iter_mut() {
                 if *state == KeyState::JustPressed {
                     *state = KeyState::Pressed;
                 }
@@ -71,5 +87,17 @@ impl Input {
         }
 
         true
+    }
+
+    pub fn get_mouse_button_pressed(&self, button: MouseButton) -> bool {
+        *self.mouse_buttons.get(&button).unwrap_or(&KeyState::Released) != KeyState::Released
+    }
+
+    pub fn get_mouse_button_just_pressed(&self, button: MouseButton) -> bool {
+        *self.mouse_buttons.get(&button).unwrap_or(&KeyState::Released) == KeyState::JustPressed
+    }
+
+    pub fn get_mouse_button_released(&self, button: MouseButton) -> bool {
+        *self.mouse_buttons.get(&button).unwrap_or(&KeyState::Released) == KeyState::Released
     }
 }
