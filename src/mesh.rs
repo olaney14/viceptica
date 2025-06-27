@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, path::PathBuf};
+use std::{collections::HashMap, error::Error, path::PathBuf, vec};
 
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
 
@@ -13,6 +13,13 @@ pub struct Mesh {
 
 pub type VertexComponent = f32;
 pub type IndexComponent = u16;
+
+pub mod flags {
+    pub const EXTEND_TEXTURE: u32 = 0b01;
+    pub const FULLBRIGHT: u32 = 0b10;
+}
+
+const VERTEX_ATTRIBUTES_COUNT: u32 = 4;
 
 impl Mesh {
     // pub fn load_from_file_obj(name: &str, gl: glow::Context) -> Result<Self, Box<dyn Error>> {
@@ -80,10 +87,10 @@ impl Mesh {
 
     pub unsafe fn create_square(r: VertexComponent, g: VertexComponent, b: VertexComponent, gl: &glow::Context) -> Self {
         let vertices: Vec<VertexComponent> = vec![
-             0.5,  0.5, 0.0, r, g, b, 1.0, 1.0,
-             0.5, -0.5, 0.0, r, g, b, 1.0, 0.0,
-            -0.5, -0.5, 0.0, r, g, b, 0.0, 0.0,
-            -0.5,  0.5, 0.0, r, g, b, 0.0, 1.0
+             0.5,  0.5, 0.0, r, g, b, 1.0, 1.0, 0.0, 0.0, -1.0,
+             0.5, -0.5, 0.0, r, g, b, 1.0, 0.0, 0.0, 0.0, -1.0,
+            -0.5, -0.5, 0.0, r, g, b, 0.0, 0.0, 0.0, 0.0, -1.0,
+            -0.5,  0.5, 0.0, r, g, b, 0.0, 1.0, 0.0, 0.0, -1.0
         ];
         let vertices_u8: &[u8] = core::slice::from_raw_parts(
             vertices.as_ptr() as *const u8,
@@ -139,34 +146,44 @@ impl Mesh {
 
     unsafe fn define_vertex_attributes(gl: &glow::Context) {
         let sizeof_float = core::mem::size_of::<f32>() as i32;
+        let stride = 11 * sizeof_float;
         // position
-        gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 8 * sizeof_float, 0);
+        gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, stride, 0);
         gl.enable_vertex_attrib_array(0);
         // vertex color
-        gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 8 * sizeof_float, 3 * sizeof_float);
+        gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, stride, 3 * sizeof_float);
         gl.enable_vertex_attrib_array(1);
         // texture coordinate
-        gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, 8 * sizeof_float, 6 * sizeof_float);
+        gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, stride, 6 * sizeof_float);
         gl.enable_vertex_attrib_array(2);
+        // normal
+        gl.vertex_attrib_pointer_f32(3, 3, glow::FLOAT, false, stride, 8 * sizeof_float);
+        gl.enable_vertex_attrib_array(3);
     }
 
     pub unsafe fn define_instanced_vertex_attributes(gl: &glow::Context) {
+        let u32_size = core::mem::size_of::<u32>() as i32;
         let vec4_size = core::mem::size_of::<cgmath::Vector4<f32>>() as i32;
+        let stride = u32_size + 4 * vec4_size;
+        gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT);
+        gl.vertex_attrib_pointer_i32(VERTEX_ATTRIBUTES_COUNT, 1, glow::UNSIGNED_INT, stride, 0);
+
         // instance model mat4
-        gl.enable_vertex_attrib_array(3);
-        gl.vertex_attrib_pointer_f32(3, 4, glow::FLOAT, false, 4 * vec4_size, 0);
-        gl.enable_vertex_attrib_array(4);
-        gl.vertex_attrib_pointer_f32(4, 4, glow::FLOAT, false, 4 * vec4_size, 1 * vec4_size);
-        gl.enable_vertex_attrib_array(5);
-        gl.vertex_attrib_pointer_f32(5, 4, glow::FLOAT, false, 4 * vec4_size, 2 * vec4_size);
-        gl.enable_vertex_attrib_array(6);
-        gl.vertex_attrib_pointer_f32(6, 4, glow::FLOAT, false, 4 * vec4_size, 3 * vec4_size);
+        gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 1);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 1, 4, glow::FLOAT, false, 4 * vec4_size, u32_size);
+        gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 2);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 2, 4, glow::FLOAT, false, 4 * vec4_size, 1 * vec4_size + u32_size);
+        gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 3);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 3, 4, glow::FLOAT, false, 4 * vec4_size, 2 * vec4_size + u32_size);
+        gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 4);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 4, 4, glow::FLOAT, false, 4 * vec4_size, 3 * vec4_size + u32_size);
     
         // what does this do ????
-        gl.vertex_attrib_divisor(3, 1);
-        gl.vertex_attrib_divisor(4, 1);
-        gl.vertex_attrib_divisor(5, 1);
-        gl.vertex_attrib_divisor(6, 1);
+        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT, 1);
+        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT + 1, 1);
+        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT + 2, 1);
+        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT + 3, 1);
+        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT + 4, 1);
     }
 }
 
@@ -193,33 +210,37 @@ impl MeshBank {
 }
 
 // https://pastebin.com/XiCprv6S
-const CUBE_VERTICES: [VertexComponent; 192] = [
-    -0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0,  // A 0
-    0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0,  // B 1
-    0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 1.0,  // C 2
-    -0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 1.0,  // D 3
-    -0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 0.0,  // E 4
-    0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 0.0,   // F 5
-    0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0,   // G 6
-    -0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 1.0,   // H 7
-
-    -0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0,  // D 8
-    -0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0,  // A 9
-    -0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0,  // E 10
-    -0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 1.0,  // H 11
-    0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0,   // B 12
-    0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0,   // C 13
-    0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0,   // G 14
-    0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 1.0,   // F 15
-
-    -0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0,  // A 16
-    0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0,   // B 17
-    0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0,   // F 18
-    -0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 1.0,  // E 19
-    0.5,  0.5, -0.5, 1.0, 1.0, 1.0,  0.0, 0.0,  // C 20
-    -0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0,  // D 21
-    -0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0,  // H 22
-    0.5,  0.5,  0.5, 1.0, 1.0, 1.0,  0.0, 1.0,  // G 23
+const CUBE_VERTICES: [VertexComponent; 264] = [
+    // -Z
+    -0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, -1.0,  // A 0
+    0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, -1.0, // B 1
+    0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, -1.0, // C 2
+    -0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, -1.0, // D 3
+    // +Z
+    -0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, // E 4
+    0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, // F 5
+    0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0,  // G 6
+    -0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0,  // H 7
+    // -X
+    -0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0,  // D 8
+    -0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0, -1.0, 0.0, 0.0, // A 9
+    -0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 0.0, 0.0, // E 10
+    -0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 1.0, -1.0, 0.0, 0.0, // H 11
+    // +X
+    0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0,  // B 12
+    0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0,  // C 13
+    0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0,  // G 14
+    0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0,  // F 15
+    // -Y
+    -0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, // A 16
+    0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, -1.0, 0.0,  // B 17
+    0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, -1.0, 0.0,  // F 18
+    -0.5, -0.5,  0.5, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, // E 19
+    // +Y
+    0.5,  0.5, -0.5, 1.0, 1.0, 1.0,  0.0, 0.0, 0.0, 1.0, 0.0, // C 20
+    -0.5,  0.5, -0.5, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, // D 21
+    -0.5,  0.5,  0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, // H 22
+    0.5,  0.5,  0.5, 1.0, 1.0, 1.0,  0.0, 1.0, 0.0, 1.0, 0.0, // G 23
 ];
 
 const CUBE_INDICES: [IndexComponent; 36] = [

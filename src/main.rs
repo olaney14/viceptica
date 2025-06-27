@@ -5,7 +5,7 @@ use glow::{HasContext};
 use glutin::surface::GlSurface;
 use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
-use crate::{mesh::Mesh, world::{Model, Renderable}};
+use crate::{mesh::{flags, Mesh}, world::{Model, Renderable}};
 
 mod mesh;
 mod input;
@@ -31,13 +31,14 @@ fn main() {
         mesh_bank.add(Mesh::create_square(0.3, 0.2, 0.1, &gl), "square");
         mesh_bank.add(Mesh::create_textured_square("test", &gl), "square_textured");
         mesh_bank.add(Mesh::create_textured_cube("test", &gl), "cube");
+        mesh_bank.add(Mesh::create_cube(&gl), "blank_cube");
     }
 
     let square_model = Model {
         mobile: false,
         render: vec![
-            Renderable::Mesh("square".to_string(), Matrix4::from_translation(vec3(-0.5, 0.0, 0.0)) * Matrix4::from_scale(0.5)),
-            Renderable::Mesh("square_textured".to_string(), Matrix4::from_translation(vec3(0.5, 0.0, 0.0)) * Matrix4::from_scale(0.5))
+            Renderable::Mesh("square".to_string(), Matrix4::from_translation(vec3(-0.5, 0.0, 0.0)) * Matrix4::from_scale(0.5), 0),
+            Renderable::Mesh("square_textured".to_string(), Matrix4::from_translation(vec3(0.5, 0.0, 0.0)) * Matrix4::from_scale(0.5), 0)
         ],
         transform: Matrix4::identity(),
         renderable_indices: Vec::new()
@@ -46,18 +47,39 @@ fn main() {
     let mobile = Model {
         mobile: true,
         render: vec![
-            Renderable::Mesh("cube".to_string(), Matrix4::from_scale(0.5))
+            Renderable::Mesh("cube".to_string(), Matrix4::from_scale(0.5), 0)
         ],
         transform: Matrix4::identity(),
         renderable_indices: Vec::new()
     };
 
+    // "concrete",
+    // "end_sky",
+    // "evilwatering",
+    // "pillows_old_floor",
+    // "sky",
+    // "sparkle",
+    // "watering"
+
     let brushes = Model {
         mobile: false,
         render: vec![
-            Renderable::Brush("watering".to_string(), vec3(0.0, -5.0, 0.0), vec3(10.0, 1.0, 10.0))
+            Renderable::Brush("watering".to_string(), vec3(0.0, -5.0, 0.0), vec3(10.0, 1.0, 10.0), flags::EXTEND_TEXTURE),
+            Renderable::Brush("concrete".to_string(), vec3(0.0, -4.0, 0.0), vec3(8.0, 1.0, 8.0), flags::EXTEND_TEXTURE),
+            Renderable::Brush("pillows_old_floor".to_string(), vec3(5.0, 0.0, 0.0), vec3(1.0, 4.0, 4.0), flags::EXTEND_TEXTURE),
+            Renderable::Brush("end_sky".to_string(), vec3(0.0, 5.0, 0.0), vec3(2.0, 2.0, 2.0), flags::EXTEND_TEXTURE),
+            Renderable::Brush("evilwatering".to_string(), vec3(3.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0), flags::EXTEND_TEXTURE),
         ],
         transform: Matrix4::identity(),
+        renderable_indices: Vec::new()
+    };
+
+    let light = Model {
+        mobile: false,
+        render: vec![
+            Renderable::Mesh("blank_cube".to_string(), Matrix4::from_scale(0.25), flags::FULLBRIGHT)
+        ],
+        transform: Matrix4::from_translation(vec3(0.0, -2.0, 0.0)),
         renderable_indices: Vec::new()
     };
 
@@ -66,11 +88,10 @@ fn main() {
         world.insert_model(square_model);
         world.insert_model(mobile);
         world.insert_model(brushes);
+        world.insert_model(light);
         world.scene.init(&mut program_bank, &gl);
         world.scene.prepare_statics(&mut mesh_bank, &gl);
     }
-
-    let mut last_cursor_position: Option<(f64, f64)> = None;
 
     let frame_sleep_duration = Duration::from_millis(MS_PER_FRAME);
     let beginning_of_application = Instant::now();

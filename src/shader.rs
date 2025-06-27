@@ -1,6 +1,6 @@
-use std::{collections::HashMap, error::Error, fs, io::Read, os, path::PathBuf};
+use std::{collections::HashMap, error::Error, fs, io::Read, os, path::PathBuf, vec};
 
-use cgmath::Matrix4;
+use cgmath::{Matrix4, Vector3};
 use glow::{HasContext, NativeUniformLocation};
 
 const SHADER_VERSION: &str = "#version 410";
@@ -64,13 +64,18 @@ impl Program {
         self.uniform_locations.get(loc).unwrap().as_ref()
     }
 
-    pub unsafe fn uniform1i32(&mut self, loc: &str, value: i32, gl: &glow::Context) {
+    pub unsafe fn uniform_1i32(&mut self, loc: &str, value: i32, gl: &glow::Context) {
         gl.uniform_1_i32(self.get_uniform_location(loc, gl), value);
     }
 
     pub unsafe fn uniform_matrix4f32(&mut self, loc: &str, value: Matrix4<f32>, gl: &glow::Context) {
         let matrix_as_slice: [[f32; 4]; 4] = value.into();
         gl.uniform_matrix_4_f32_slice(self.get_uniform_location(loc, gl), false, &matrix_as_slice.as_flattened());
+    }
+
+    pub unsafe fn uniform_3f32(&mut self, loc: &str, value: Vector3<f32>, gl: &glow::Context) {
+        let vector_as_slice: [f32; 3] = value.into();
+        gl.uniform_3_f32_slice(self.get_uniform_location(loc, gl), &vector_as_slice);
     }
 }
 

@@ -1,15 +1,22 @@
 use core::f32;
 use std::collections::HashMap;
 
-use cgmath::{point3, vec3, Deg, ElementWise, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
+use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
 use glow::{HasContext, NativeBuffer};
 use winit::keyboard::Key;
 
 use crate::{input::Input, mesh::{Mesh, MeshBank}, shader::ProgramBank, texture::TextureBank, world::{Model, Renderable}};
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RenderData {
+    flags: u32,
+    transform: Matrix4<f32>
+}
+
 pub struct Scene {
     // eventually make this <String, all uniforms>
-    pub static_meshes: HashMap<String, Vec<Matrix4<f32>>>,
+    pub static_meshes: HashMap<String, Vec<RenderData>>,
     static_meshes_updated: Vec<String>,
     static_instance_buffers: HashMap<String, NativeBuffer>,
     pub mobile_meshes: HashMap<String, Vec<Matrix4<f32>>>,
@@ -28,10 +35,13 @@ impl Scene {
     pub unsafe fn render(&self, meshes: &MeshBank, programs: &mut ProgramBank, textures: &TextureBank, gl: &glow::Context) {
         let instanced_program = programs.get_mut("instanced").unwrap();
         gl.use_program(Some(instanced_program.inner));
-        instanced_program.uniform1i32("textureIn", 0, gl);
+        instanced_program.uniform_1i32("textureIn", 0, gl);
         instanced_program.uniform_matrix4f32("view", self.camera.view, gl);
         instanced_program.uniform_matrix4f32("projection", self.camera.projection, gl);
-        
+        instanced_program.uniform_3f32("lightColor", vec3(1.0, 1.0, 1.0), gl);
+        instanced_program.uniform_3f32("lightPos", vec3(0.0, -2.0, 0.0), gl);
+        instanced_program.uniform_3f32("viewPos", self.camera.pos.to_vec(), gl);
+
         for (name, buffer) in self.static_instance_buffers.iter() {
             let mesh = meshes.get(name).unwrap();
 
@@ -50,7 +60,7 @@ impl Scene {
 
         let flat_program = programs.get_mut("flat").unwrap();
         gl.use_program(Some(flat_program.inner));
-        flat_program.uniform1i32("textureIn", 0, gl);
+        flat_program.uniform_1i32("textureIn", 0, gl);
         flat_program.uniform_matrix4f32("view", self.camera.view, gl);
         flat_program.uniform_matrix4f32("projection", self.camera.projection, gl);
         
@@ -73,11 +83,11 @@ impl Scene {
         }
     }
 
-    fn add_static_mesh(&mut self, mesh: &str, transform: Matrix4<f32>) {
+    fn add_static_mesh(&mut self, mesh: &str, transform: Matrix4<f32>, flags: u32) {
         if let Some(transforms) = self.static_meshes.get_mut(mesh) {
-            transforms.push(transform);
+            transforms.push(RenderData { transform, flags });
         } else {
-            self.static_meshes.insert(mesh.to_string(), vec![transform]);
+            self.static_meshes.insert(mesh.to_string(), vec![RenderData { transform, flags }]);
         }
     }
 
@@ -93,26 +103,26 @@ impl Scene {
         let mut renderable_indices = Vec::new();
         for renderable in model.render.iter() {
             match renderable {
-                Renderable::Mesh(name, transform) => {
+                Renderable::Mesh(name, transform, flags) => {
                     if model.mobile {
                         self.add_mobile_mesh(name, model.transform * transform);
                         renderable_indices.push(self.mobile_meshes.get(name).unwrap().len() - 1);
                     } else {
-                        self.add_static_mesh(name, model.transform * transform);
+                        self.add_static_mesh(name, model.transform * transform, *flags);
                         if !self.static_meshes_updated.contains(name) {
                             self.static_meshes_updated.push(name.to_string());
                         }
                         renderable_indices.push(self.static_meshes.get(name).unwrap().len() - 1);
                     }
                 },
-                Renderable::Brush(texture, position, size) => {
+                Renderable::Brush(texture, position, size, flags) => {
                     let name = format!("Brush_{}", texture);
                     let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
                     if model.mobile {
                         self.add_mobile_mesh(&name, model.transform * transform);
                         renderable_indices.push(self.mobile_meshes.get(&name).unwrap().len() - 1);
                     } else {
-                        self.add_static_mesh(&name, transform);
+                        self.add_static_mesh(&name, transform, *flags);
                         if !self.static_meshes_updated.contains(&name) {
                             self.static_meshes_updated.push(name.clone());
                         }
@@ -132,10 +142,10 @@ impl Scene {
 
         for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
             match renderable {
-                Renderable::Mesh(name, transform) => {
+                Renderable::Mesh(name, transform, flags) => {
                     self.mobile_meshes.get_mut(name).unwrap()[*index] = model.transform * transform;
                 },
-                Renderable::Brush(texture, position, size) => {
+                Renderable::Brush(texture, position, size, flags) => {
                     let name = format!("Brush_{}", texture);
                     let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
                     self.mobile_meshes.get_mut(&name).unwrap()[*index] = model.transform * transform;
@@ -166,11 +176,11 @@ impl Scene {
                 self.static_instance_buffers.get(updated).unwrap()
             };
 
-            let transforms = self.static_meshes.get(updated).unwrap();
+            let render_data = self.static_meshes.get(updated).unwrap();
 
             let instance_data: &[u8] = core::slice::from_raw_parts(
-                transforms.as_ptr() as *const u8,
-                transforms.len() * core::mem::size_of::<Matrix4<f32>>()
+                render_data.as_ptr() as *const u8,
+                render_data.len() * core::mem::size_of::<RenderData>()
             );
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(*new_buffer));
             gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, instance_data, glow::STATIC_DRAW);

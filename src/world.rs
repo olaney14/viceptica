@@ -50,8 +50,8 @@ impl World {
 
 #[derive(Clone)]
 pub enum Renderable {
-    Mesh(String, Matrix4<f32>),
-    Brush(String, Vector3<f32>, Vector3<f32>)
+    Mesh(String, Matrix4<f32>, u32),
+    Brush(String, Vector3<f32>, Vector3<f32>, u32)
 }
 
 #[derive(Clone)]
