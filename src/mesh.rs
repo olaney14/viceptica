@@ -8,7 +8,7 @@ pub struct Mesh {
     vbo: NativeBuffer,
     ebo: NativeBuffer,
     pub indices: usize,
-    pub texture: String
+    pub material: String
 }
 
 pub type VertexComponent = f32;
@@ -75,13 +75,13 @@ impl Mesh {
             vao, vbo, ebo,
             vao_instanced,
             indices: CUBE_INDICES.len(),
-            texture: "magic_pixel".to_string()
+            material: "default".to_string()
         }
     }
 
-    pub unsafe fn create_textured_cube(texture: &str, gl: &glow::Context) -> Self {
+    pub unsafe fn create_material_cube(material: &str, gl: &glow::Context) -> Self {
         let mut cube = Self::create_cube(gl);
-        cube.texture = texture.to_string();
+        cube.material = material.to_string();
         cube
     }
 
@@ -134,13 +134,18 @@ impl Mesh {
             vao, vbo, ebo,
             vao_instanced,
             indices: 6,
-            texture: "magic_pixel".to_string()
+            material: "default".to_string()
         }
     }
 
-    pub unsafe fn create_textured_square(texture: &str, gl: &glow::Context) -> Self {
+    pub fn with_material(mut self, material: &str) -> Self {
+        self.material = material.to_string();
+        self
+    }
+
+    pub unsafe fn create_material_square(material: &str, gl: &glow::Context) -> Self {
         let mut square = Self::create_square(1.0, 1.0, 1.0, gl);
-        square.texture = texture.to_string();
+        square.material = material.to_string();
         square
     }
 
@@ -170,13 +175,13 @@ impl Mesh {
 
         // instance model mat4
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 1);
-        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 1, 4, glow::FLOAT, false, 4 * vec4_size, u32_size);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 1, 4, glow::FLOAT, false, stride, u32_size);
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 2);
-        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 2, 4, glow::FLOAT, false, 4 * vec4_size, 1 * vec4_size + u32_size);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 2, 4, glow::FLOAT, false, stride, 1 * vec4_size + u32_size);
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 3);
-        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 3, 4, glow::FLOAT, false, 4 * vec4_size, 2 * vec4_size + u32_size);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 3, 4, glow::FLOAT, false, stride, 2 * vec4_size + u32_size);
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 4);
-        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 4, 4, glow::FLOAT, false, 4 * vec4_size, 3 * vec4_size + u32_size);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 4, 4, glow::FLOAT, false, stride, 3 * vec4_size + u32_size);
     
         // what does this do ????
         gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT, 1);

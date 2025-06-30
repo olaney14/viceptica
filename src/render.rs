@@ -3,31 +3,79 @@ use std::collections::HashMap;
 
 use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
 use glow::{HasContext, NativeBuffer};
-use winit::keyboard::Key;
+use winit::{event::MouseButton, keyboard::Key};
 
-use crate::{input::Input, mesh::{Mesh, MeshBank}, shader::ProgramBank, texture::TextureBank, world::{Model, Renderable}};
+use crate::{collision::PhysicalProperties, input::Input, mesh::{self, Mesh, MeshBank}, shader::ProgramBank, texture::TextureBank, world::{self, Model, Renderable}};
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct RenderData {
     flags: u32,
     transform: Matrix4<f32>
 }
 
+#[derive(Debug)]
+pub struct Material {
+    pub diffuse: String,
+    pub specular: String,
+    pub shininess: f32,
+    pub physical_properties: PhysicalProperties
+}
+
+impl Material {
+    pub fn new(diffuse: &str, specular: &str, shininess: f32) -> Self {
+        Self {
+            diffuse: diffuse.to_string(), shininess, specular: specular.to_string(), physical_properties: PhysicalProperties::default()
+        }
+    }
+
+    pub fn with_physical_properties(diffuse: &str, specular: &str, shininess: f32, physical_properties: PhysicalProperties) -> Self {
+        Self {
+            diffuse: diffuse.to_string(), shininess, specular: specular.to_string(), physical_properties
+        }
+    }
+
+    pub fn diffuse_only(diffuse: &str, shininess: f32) -> Self {
+        Self::new(diffuse, "evil_pixel", shininess)
+    }
+}
+
+pub struct DirLight {
+    pub direction: Vector3<f32>,
+    pub ambient: Vector3<f32>,
+    pub diffuse: Vector3<f32>,
+    pub specular: Vector3<f32>
+}
+
+pub struct PointLight {
+    pub position: Vector3<f32>,
+    pub constant: f32,
+    pub linear: f32,
+    pub quadratic: f32,
+    pub ambient: Vector3<f32>,
+    pub diffuse: Vector3<f32>,
+    pub specular: Vector3<f32>
+}
+
 pub struct Scene {
     // eventually make this <String, all uniforms>
-    pub static_meshes: HashMap<String, Vec<RenderData>>,
+    static_meshes: HashMap<String, Vec<RenderData>>,
     static_meshes_updated: Vec<String>,
     static_instance_buffers: HashMap<String, NativeBuffer>,
-    pub mobile_meshes: HashMap<String, Vec<Matrix4<f32>>>,
+    mobile_meshes: HashMap<String, Vec<Matrix4<f32>>>,
     pub camera: Camera,
+    pub materials: HashMap<String, Material>,
+    pub dir_light: DirLight,
+    pub point_lights: Vec<PointLight>
 }
 
 impl Scene {
-    /// load shaders, primitive meshes
-    pub unsafe fn init(&mut self, programs: &mut ProgramBank, gl: &glow::Context) {
+    /// load shaders, primitive meshes, materials
+    pub unsafe fn init(&mut self, textures: &mut TextureBank, meshes: &mut MeshBank, programs: &mut ProgramBank, gl: &glow::Context) {
         programs.load_by_name_vf("instanced", gl).unwrap();
         programs.load_by_name_vf("flat", gl).unwrap();
+        self.add_default_materials();
+        world::load_brushes(textures, meshes, self, &gl);
 
         gl.enable(glow::DEPTH_TEST);
     }
@@ -35,19 +83,41 @@ impl Scene {
     pub unsafe fn render(&self, meshes: &MeshBank, programs: &mut ProgramBank, textures: &TextureBank, gl: &glow::Context) {
         let instanced_program = programs.get_mut("instanced").unwrap();
         gl.use_program(Some(instanced_program.inner));
-        instanced_program.uniform_1i32("textureIn", 0, gl);
+        // instanced_program.uniform_1i32("textureIn", 0, gl);
         instanced_program.uniform_matrix4f32("view", self.camera.view, gl);
         instanced_program.uniform_matrix4f32("projection", self.camera.projection, gl);
-        instanced_program.uniform_3f32("lightColor", vec3(1.0, 1.0, 1.0), gl);
-        instanced_program.uniform_3f32("lightPos", vec3(0.0, -2.0, 0.0), gl);
         instanced_program.uniform_3f32("viewPos", self.camera.pos.to_vec(), gl);
+        instanced_program.uniform_1i32("material.diffuse", 0, gl);
+        instanced_program.uniform_1i32("material.specular", 1, gl);
+        instanced_program.uniform_1i32("pointLightCount", self.point_lights.len().min(64) as i32, gl);
+
+        for i in 0..(self.point_lights.len().min(64)) {
+            let light = self.point_lights.get(i).unwrap();
+            instanced_program.uniform_3f32(&format!("pointLights[{}].position", i), light.position, gl);
+            instanced_program.uniform_1f32(&format!("pointLights[{}].constant", i), light.constant, gl);
+            instanced_program.uniform_1f32(&format!("pointLights[{}].linear", i), light.linear, gl);
+            instanced_program.uniform_1f32(&format!("pointLights[{}].quadratic", i), light.quadratic, gl);
+            instanced_program.uniform_3f32(&format!("pointLights[{}].ambient", i), light.ambient, gl);
+            instanced_program.uniform_3f32(&format!("pointLights[{}].diffuse", i), light.diffuse, gl);
+            instanced_program.uniform_3f32(&format!("pointLights[{}].specular", i), light.specular, gl);
+        }
+
+        instanced_program.uniform_3f32("dirLight.direction", self.dir_light.direction, gl);
+        instanced_program.uniform_3f32("dirLight.ambient", self.dir_light.ambient, gl);
+        instanced_program.uniform_3f32("dirLight.diffuse", self.dir_light.diffuse, gl);
+        instanced_program.uniform_3f32("dirLight.specular", self.dir_light.specular, gl);
 
         for (name, buffer) in self.static_instance_buffers.iter() {
             let mesh = meshes.get(name).unwrap();
+            let material = self.materials.get(&mesh.material).unwrap();
 
             gl.active_texture(glow::TEXTURE0);
-            gl.bind_texture(glow::TEXTURE_2D, textures.get(&mesh.texture).map(|s| s.inner));
+            gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.diffuse).map(|s| s.inner));
+            gl.active_texture(glow::TEXTURE1);
+            gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.specular).map(|f| f.inner));
             gl.bind_vertex_array(Some(mesh.vao_instanced));
+            
+            instanced_program.uniform_1f32("material.shininess", material.shininess, gl);
 
             gl.draw_elements_instanced(
                 glow::TRIANGLES,
@@ -66,11 +136,12 @@ impl Scene {
         
         for (name, transforms) in self.mobile_meshes.iter() {
             let mesh = meshes.get(name).unwrap();
+            let material = self.materials.get(&mesh.material).unwrap();
 
             for transform in transforms.iter() {
                 flat_program.uniform_matrix4f32("model", *transform, gl);
                 gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, textures.get(&mesh.texture).map(|s| s.inner));
+                gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.diffuse).map(|s| s.inner));
                 gl.bind_vertex_array(Some(mesh.vao));
 
                 gl.draw_elements(
@@ -135,6 +206,23 @@ impl Scene {
         renderable_indices
     }
 
+    pub unsafe fn load_texture_to_material(&mut self, texture: &str, textures: &mut TextureBank, gl: &glow::Context) {
+        textures.load_by_name(texture, gl).unwrap();
+        self.add_material(Material::new(texture, "evil_pixel", 32.0), texture);
+    }
+
+    pub unsafe fn load_material_diff_spec(&mut self, name: &str, diffuse: &str, specular: &str, textures: &mut TextureBank, gl: &glow::Context) {
+        textures.load_by_name(diffuse, gl).unwrap();
+        textures.load_by_name(specular, gl).unwrap();
+        self.add_material(Material::new(diffuse, specular, 32.0), name);
+    }
+
+    pub unsafe fn load_material_diff_spec_phys(&mut self, name: &str, diffuse: &str, specular: &str, phys: PhysicalProperties, textures: &mut TextureBank, gl: &glow::Context) {
+        textures.load_by_name(diffuse, gl).unwrap();
+        textures.load_by_name(specular, gl).unwrap();
+        self.add_material(Material::with_physical_properties(diffuse, specular, 32.0, phys), name);
+    }
+
     pub fn update_model_transform(&mut self, model: &Model) {
         if !model.mobile {
             unimplemented!();
@@ -160,7 +248,23 @@ impl Scene {
             static_instance_buffers: HashMap::new(),
             static_meshes: HashMap::new(),
             static_meshes_updated: Vec::new(),
-            camera: Camera::new()
+            camera: Camera::new(),
+            materials: HashMap::new(),
+            dir_light: DirLight {
+                direction: vec3(-0.2, -1.0, -0.3),
+                ambient: vec3(0.1, 0.1, 0.1),
+                diffuse: vec3(0.5, 0.5, 0.5),
+                specular: vec3(1.0, 1.0, 1.0)
+            },
+            point_lights: Vec::new()
+        }
+    }
+
+    pub fn add_point_light(&mut self, light: PointLight) {
+        self.point_lights.push(light);
+
+        if self.point_lights.len() > 64 {
+            eprintln!("Warning: Too many point lights in scene");
         }
     }
 
@@ -185,12 +289,21 @@ impl Scene {
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(*new_buffer));
             gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, instance_data, glow::STATIC_DRAW);
         
-            let mesh = meshes.meshes.get_mut(updated).unwrap();
+            let mesh = meshes.meshes.get_mut(updated).expect("Failed to get mesh");
             gl.bind_vertex_array(Some(mesh.vao_instanced));
             Mesh::define_instanced_vertex_attributes(gl);
             gl.bind_vertex_array(None);
         }
     }
+
+    pub fn add_material(&mut self, material: Material, name: &str) {
+        self.materials.insert(name.to_string(), material);
+    }
+}
+
+pub enum CameraControlScheme {
+    FirstPerson(bool),
+    Editor
 }
 
 pub struct Camera {
@@ -201,7 +314,7 @@ pub struct Camera {
     pub view: Matrix4<f32>,
     pub projection: Matrix4<f32>,
     pub speed: f32,
-    pub mouse_locked: bool,
+    pub control_sceme: CameraControlScheme,
     pub pitch: f32,
     pub yaw: f32,
     pub sensitivity: f32,
@@ -219,7 +332,7 @@ impl Camera {
             view: Matrix4::identity(),
             projection: cgmath::perspective(Deg(80.0), 640.0 / 480.0, 0.1, 100.0),
             speed: 3.5,
-            mouse_locked: false,
+            control_sceme: CameraControlScheme::FirstPerson(false), 
             pitch: 0.0,
             yaw: -f32::consts::PI / 2.0,
             sensitivity: 0.007,
@@ -244,44 +357,74 @@ impl Camera {
         self.direction = self.direction.normalize();
     }
 
-    pub fn mouse_movement(&mut self, dx: f64, dy: f64) {
-        if self.mouse_locked {
-            self.yaw += dx as f32 * self.sensitivity;
-            self.pitch += dy as f32 * self.sensitivity;
+    pub fn mouse_movement(&mut self, dx: f64, dy: f64, input: &Input) {
+        match self.control_sceme {
+            CameraControlScheme::Editor => {
+                if input.get_mouse_button_pressed(MouseButton::Right) {
+                    self.yaw += dx as f32 * self.sensitivity;
+                    self.pitch += dy as f32 * self.sensitivity;
 
-            if self.pitch > (f32::consts::PI / 2.0) - 0.025 {
-                self.pitch = (f32::consts::PI / 2.0) - 0.025;
-            } else if self.pitch < (-f32::consts::PI / 2.0) + 0.025 {
-                self.pitch = (-f32::consts::PI / 2.0) + 0.025;
+                    if self.pitch > (f32::consts::PI / 2.0) - 0.025 {
+                        self.pitch = (f32::consts::PI / 2.0) - 0.025;
+                    } else if self.pitch < (-f32::consts::PI / 2.0) + 0.025 {
+                        self.pitch = (-f32::consts::PI / 2.0) + 0.025;
+                    }
+
+                    self.calculate_direction();
+                }
             }
+            CameraControlScheme::FirstPerson(locked) => {
+                if locked {
+                    self.yaw += dx as f32 * self.sensitivity;
+                    self.pitch += dy as f32 * self.sensitivity;
 
-            self.calculate_direction();
+                    if self.pitch > (f32::consts::PI / 2.0) - 0.025 {
+                        self.pitch = (f32::consts::PI / 2.0) - 0.025;
+                    } else if self.pitch < (-f32::consts::PI / 2.0) + 0.025 {
+                        self.pitch = (-f32::consts::PI / 2.0) + 0.025;
+                    }
+
+                    self.calculate_direction();
+                }
+            }
         }
     }
 
     pub fn update(&mut self, input: &Input, delta_time: f32) {
-        if input.get_key_pressed(Key::Character("w".into())) {
-            self.pos += self.speed * delta_time * self.direction.normalize();
-        }
-        if input.get_key_pressed(Key::Character("s".into())) {
-            self.pos -= self.speed * delta_time * self.direction.normalize();
-        }
-        if input.get_key_pressed(Key::Character("a".into())) {
-            self.pos += self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
-        }
-        if input.get_key_pressed(Key::Character("d".into())) {
-            self.pos -= self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
-        }
-        if input.get_key_pressed(Key::Character("e".into())) {
-            self.pos += self.speed * delta_time * self.up.normalize();
-        }
-        if input.get_key_pressed(Key::Character("q".into())) {
-            self.pos -= self.speed * delta_time * self.up.normalize();
+        match self.control_sceme {
+            CameraControlScheme::Editor => {
+                if input.get_key_pressed(Key::Character("w".into())) {
+                    self.pos += self.speed * delta_time * self.direction.normalize();
+                }
+                if input.get_key_pressed(Key::Character("s".into())) {
+                    self.pos -= self.speed * delta_time * self.direction.normalize();
+                }
+                if input.get_key_pressed(Key::Character("a".into())) {
+                    self.pos += self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
+                }
+                if input.get_key_pressed(Key::Character("d".into())) {
+                    self.pos -= self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
+                }
+                if input.get_key_pressed(Key::Character("e".into())) {
+                    self.pos += self.speed * delta_time * self.up.normalize();
+                }
+                if input.get_key_pressed(Key::Character("q".into())) {
+                    self.pos -= self.speed * delta_time * self.up.normalize();
+                }
+            },
+            // Camera is moved by the player in this state
+            CameraControlScheme::FirstPerson(_) => ()
         }
 
         self.right = vec3(0.0, 1.0, 0.0).cross(self.direction).normalize();
         self.up = self.direction.cross(self.right);
 
         self.view = Matrix4::look_at_rh(self.pos, self.pos + self.direction, vec3(0.0, 1.0, 0.0));
+    }
+}
+
+impl Scene {
+    pub fn add_default_materials(&mut self) {
+        self.add_material(Material::new("magic_pixel", "evil_pixel", 32.0), "default");
     }
 }

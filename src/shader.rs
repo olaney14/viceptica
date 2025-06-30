@@ -73,6 +73,10 @@ impl Program {
         gl.uniform_matrix_4_f32_slice(self.get_uniform_location(loc, gl), false, &matrix_as_slice.as_flattened());
     }
 
+    pub unsafe fn uniform_1f32(&mut self, loc: &str, value: f32, gl: &glow::Context) {
+        gl.uniform_1_f32(self.get_uniform_location(loc, gl), value);
+    }
+
     pub unsafe fn uniform_3f32(&mut self, loc: &str, value: Vector3<f32>, gl: &glow::Context) {
         let vector_as_slice: [f32; 3] = value.into();
         gl.uniform_3_f32_slice(self.get_uniform_location(loc, gl), &vector_as_slice);

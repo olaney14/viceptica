@@ -13,7 +13,8 @@ pub enum KeyState {
 pub struct Input {
     pub keys: HashMap<Key, KeyState>,
     pub mouse_buttons: HashMap<MouseButton, KeyState>,
-    pub needs_update: bool
+    pub needs_update: bool,
+    pub mouse_pos: (f64, f64)
 }
 
 impl Input {
@@ -21,7 +22,8 @@ impl Input {
         Input {
             keys: HashMap::new(),
             mouse_buttons: HashMap::new(),
-            needs_update: false
+            needs_update: false,
+            mouse_pos: (0.0, 0.0)
         }
     }
 
@@ -29,6 +31,10 @@ impl Input {
     pub fn on_key_pressed(&mut self, key: Key) {
         self.keys.insert(key, KeyState::JustPressed);
         self.needs_update = true;
+    }
+
+    pub fn on_mouse_moved(&mut self, x: f64, y: f64) {
+        self.mouse_pos = (x, y);
     }
 
     /// Call when a key is released in your window manager loop

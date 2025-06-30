@@ -12,3 +12,5 @@ raw-window-handle = "0.5"
 cgmath = "0.18.0"
 image = "0.25.6"
 tobj = "4.0.3"
+winapi = { version = "0.3.9", features = ["winuser"] }
+parry3d = "0.21.1"
