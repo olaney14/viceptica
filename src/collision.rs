@@ -1,5 +1,9 @@
-use cgmath::{vec3, InnerSpace, Vector3};
-use parry3d::{bounding_volume::{Aabb, BoundingSphere, BoundingVolume}, na::{Isometry3, OPoint, Point3}, query::{self, Contact}, shape::{Ball, Cuboid, Shape}};
+use core::f32;
+
+use cgmath::{vec3, vec4, InnerSpace, Vector3, Zero};
+use parry3d::{bounding_volume::{Aabb, BoundingVolume}, na::{Isometry3, Point3}, query::{self, Contact, Ray}, shape::{Cuboid, Shape}};
+
+use crate::world::{Model, ModelCollider, Renderable, World};
 
 pub const STAIR_MAX_SIZE: f32 = 0.55;
 
@@ -35,25 +39,9 @@ impl PhysicalScene {
         }
     }
 
-    // pub fn move_and_slide(&mut self, index: usize, vel: Vector3<f32>) -> Vector3<f32> {
-    //     self.colliders.get_mut(index).unwrap().shift(vel.x, vel.y, vel.z);
-    //     let mut final_velocity = vel;
-
-    //     for (i, collider) in self.colliders.iter().enumerate() {
-    //         if i != index {
-    //             if let Some(contact) = self.colliders.get(index).unwrap().get_contact(collider) {
-    //                 let hit_normal = vec3(contact.normal2.x, contact.normal2.y, contact.normal2.z);
-    //                 let projected = final_velocity.project_on(hit_normal);
-    //                 final_velocity = vel - projected;
-
-    //                 self.colliders.get_mut(index).unwrap().shift(-vel.x, -vel.y, -vel.z);
-    //                 self.colliders.get_mut(index).unwrap().shift(final_velocity.x, final_velocity.y, final_velocity.z);
-    //             }
-    //         }
-    //     }
-
-    //     final_velocity
-    // }
+    pub fn set_collider_pos(&mut self, index: usize, pos: Vector3<f32>) {
+        self.colliders.get_mut(index).unwrap().as_mut().unwrap().set_pos(pos.x, pos.y, pos.z);
+    }
 
     pub fn move_and_slide(&mut self, index: usize, vel: Vector3<f32>) -> MoveSlideResult {
         self.colliders.get_mut(index).unwrap().as_mut().unwrap().shift(vel.x, vel.y, vel.z);
@@ -63,6 +51,7 @@ impl PhysicalScene {
 
         for i in 0..self.colliders.len() {
             if i != index {
+                if self.colliders[i].is_none() { continue; }
                 if let Some(contact) = self.colliders.get(index).unwrap().as_ref().unwrap().get_contact(self.colliders.get(i).unwrap().as_ref().unwrap()) {
                     let initial_velocity = final_velocity;
                     let hit_normal = vec3(contact.normal2.x, contact.normal2.y, contact.normal2.z);
@@ -70,14 +59,11 @@ impl PhysicalScene {
                     if hit_normal.normalize().dot(final_velocity.normalize()) < 0.0 {
                         // Stairs check
                         let mut skip_resolve = false;
-                        if hit_normal.y.abs() < 0.01 {
+                        if hit_normal.y.abs() < 0.01 && vel.y < 0.005 {
                             let this_bounding = self.colliders.get(index).unwrap().as_ref().unwrap().bounding;
                             let other_bounding = self.colliders.get(i).unwrap().as_ref().unwrap().bounding;
                             let standing_diff = (other_bounding.center().y + other_bounding.half_extents().y) - (this_bounding.center().y - this_bounding.half_extents().y);
                             if standing_diff < STAIR_MAX_SIZE {
-                                // final_velocity.y += standing_diff;
-                                // self.colliders.get_mut(index).unwrap().as_mut().unwrap().shift(-initial_velocity.x, -initial_velocity.y, -initial_velocity.z);
-                                // self.colliders.get_mut(index).unwrap().as_mut().unwrap().shift(final_velocity.x, final_velocity.y, final_velocity.z);
                                 self.colliders.get_mut(index).unwrap().as_mut().unwrap().shift(0.0, standing_diff, 0.0);
                                 skip_resolve = true;
                             }
@@ -105,6 +91,182 @@ impl PhysicalScene {
             normals,
             materials,
             final_position
+        }
+    }
+
+    pub fn raycast(&mut self, select_foreground: bool, origin: Vector3<f32>, direction: Vector3<f32>, distance: f32, params: &RaycastParameters) -> Option<RaycastResult> {
+        let mut closest_intersection = f32::MAX;
+        let mut result: Option<RaycastResult> = None;
+        let ray = Ray::new(Point3::new(origin.x, origin.y, origin.z), parry3d::na::Vector3::new(direction.x, direction.y, direction.z).normalize());
+        
+        // Check for meshes in the foreground (e.g. movement arrows)
+        if select_foreground {
+            for i in 0..self.colliders.len() {
+                if params.ignore.contains(&i) { continue; }
+                
+                if let Some(collider) = &self.colliders[i] {
+                    if collider.foreground {
+                        if let Some(intersection) = collider.shape.cast_ray_and_get_normal(&collider.pos, &ray, distance, true) {
+                            if intersection.time_of_impact < closest_intersection {
+                                closest_intersection = intersection.time_of_impact;
+                                let intersection_pos = origin + direction.normalize() * intersection.time_of_impact;
+                                result = Some(RaycastResult {
+                                    normal: vec3(intersection.normal.x, intersection.normal.y, intersection.normal.z),
+                                    pos: intersection_pos,
+                                    model: collider.model,
+                                    renderable: collider.renderable
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If the foreground check doesnt yield anything move on to the rest of the colliders
+            if result.is_some() {
+                return result;
+            }
+        }
+
+        for i in 0..self.colliders.len() {
+            if params.ignore.contains(&i) { continue; }
+
+            if let Some(collider) = &self.colliders[i] {
+                if let Some(intersection) = collider.shape.cast_ray_and_get_normal(&collider.pos, &ray, distance, true) {
+                    if intersection.time_of_impact < closest_intersection {
+                        closest_intersection = intersection.time_of_impact;
+                        let intersection_pos = origin + direction.normalize() * intersection.time_of_impact;
+                        result = Some(RaycastResult {
+                            normal: vec3(intersection.normal.x, intersection.normal.y, intersection.normal.z),
+                            pos: intersection_pos,
+                            model: collider.model,
+                            renderable: collider.renderable
+                        });
+                    }
+                }
+            }
+        }
+
+        result
+    }
+}
+
+#[derive(Debug)]
+pub struct RaycastResult {
+    pub pos: Vector3<f32>,
+    pub normal: Vector3<f32>,
+    pub model: Option<usize>,
+    pub renderable: Option<usize>
+}
+
+pub struct RaycastParameters {
+    pub ignore: Vec<usize>
+}
+
+impl RaycastParameters {
+    pub fn new() -> Self {
+        Self {
+            ignore: Vec::new()
+        }
+    }
+
+    pub fn ignore(mut self, ignore: Vec<usize>) -> Self {
+        self.ignore = ignore;
+        self
+    }
+}
+
+impl Model {
+    fn insert_model_collider(&mut self, model_collider: &ModelCollider, model_position: Vector3<f32>, world: &mut World) {
+        match model_collider {
+            ModelCollider::Cuboid { offset, half_extents } => {
+                let mut collider = Collider::cuboid(*offset + model_position, *half_extents * 2.0, Vector3::zero());
+                collider.physical_properties = PhysicalProperties::default();
+                collider.renderable = None;
+                collider.model = self.index;
+                collider.foreground = self.foreground;
+                self.colliders.push(Some(world.physical_scene.add_collider(collider)));
+            },
+            ModelCollider::Multiple { colliders } => {
+                for collider in colliders.iter() {
+                    self.insert_model_collider(collider, model_position, world);
+                }
+            }
+        }
+    }
+
+    pub fn insert_colliders(&mut self, world: &mut World) {
+        assert!(self.colliders.len() == 0, "Colliders inserted more than once");
+        let model_position: Vector3<f32> = (self.transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+
+        for (i, renderable) in self.render.iter().enumerate() {
+            match renderable {
+                Renderable::Brush(material, position, size, _) => {
+                    let properties = world.scene.materials.get(material).unwrap().physical_properties;
+                    let mut collider = Collider::cuboid(*position + model_position, *size, Vector3::zero());
+                    collider.physical_properties = properties;
+                    collider.renderable = Some(i);
+                    collider.model = self.index;
+                    collider.foreground = self.foreground;
+                    self.colliders.push(Some(world.physical_scene.add_collider(collider)));
+                },
+                _ => {
+                    self.colliders.push(None);
+                }
+            }
+        }
+
+        if self.insert_collider.is_some() {
+            let insert_collider = self.insert_collider.take().unwrap();
+            self.insert_model_collider(&insert_collider, model_position, world);
+            self.insert_collider = Some(insert_collider);
+        }
+    }
+}
+
+impl World {
+    fn update_model_collider(&mut self, model_collider: &ModelCollider, model_position: Vector3<f32>, model: usize, i: usize) {
+        match model_collider {
+            ModelCollider::Cuboid { offset, half_extents } => {
+                let mut collider = Collider::cuboid(*offset + model_position, *half_extents * 2.0, Vector3::zero());
+                collider.physical_properties = PhysicalProperties::default();
+                collider.renderable = None;
+                collider.model = Some(model);
+                collider.foreground = self.models[model].as_ref().unwrap().foreground;
+                let collider_index = self.models[model].as_ref().unwrap().colliders[i].unwrap();
+                self.physical_scene.colliders[collider_index] = Some(collider);
+            },
+            ModelCollider::Multiple { colliders } => {
+                for (j, collider) in colliders.iter().enumerate() {
+                    self.update_model_collider(collider, model_position, model, i + j);
+                }
+            }
+        }
+    }
+
+    pub fn update_colliders(&mut self, model: usize) {
+        let model_position: Vector3<f32> = (self.models[model].as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+
+        for i in 0..self.models[model].as_ref().unwrap().render.len() {
+            match &self.models[model].as_ref().unwrap().render[i] {
+                Renderable::Brush(material, position, size, _) => {
+                    let properties = self.scene.materials.get(material).unwrap().physical_properties;
+                    let mut collider = Collider::cuboid(*position + model_position, *size, Vector3::zero());
+                    collider.physical_properties = properties;
+                    collider.renderable = Some(i);
+                    collider.model = Some(model);
+                    collider.foreground = self.models[model].as_ref().unwrap().foreground;
+                    let collider_index = self.models[model].as_ref().unwrap().colliders[i].unwrap();
+                    self.physical_scene.colliders[collider_index] = Some(collider);
+                },
+                _ => ()
+            }
+        }
+
+        if self.models[model].as_ref().unwrap().insert_collider.is_some() {
+            let insert_collider = self.models[model].as_mut().unwrap().insert_collider.take().unwrap();
+            self.update_model_collider(&insert_collider, model_position, model, self.models[model].as_ref().unwrap().render.len());
+            self.models[model].as_mut().unwrap().insert_collider = Some(insert_collider);
         }
     }
 }
@@ -135,9 +297,14 @@ impl Default for PhysicalProperties {
 
 pub struct Collider {
     pub bounding: Aabb,
+
+    /// Only affects mouse raycasting, if this is true raycast will prioritize this
+    pub foreground: bool,
     pub shape: Box<dyn Shape>,
     pub pos: Isometry3<f32>,
-    pub physical_properties: PhysicalProperties
+    pub physical_properties: PhysicalProperties,
+    pub model: Option<usize>,
+    pub renderable: Option<usize>
 }
 
 impl Collider {
@@ -146,6 +313,13 @@ impl Collider {
         self.pos.translation.y += dy;
         self.pos.translation.z += dz;
         self.bounding = self.bounding.translated(&parry3d::na::Vector3::new(dx, dy, dz));
+    }
+
+    pub fn set_pos(&mut self, x: f32, y: f32, z: f32) {
+        let dx = x - self.pos.translation.x;
+        let dy = y - self.pos.translation.y;
+        let dz = z - self.pos.translation.z;
+        self.shift(dx, dy, dz);
     }
 
     pub fn get_contact(&self, other: &Collider) -> Option<Contact> {
@@ -172,7 +346,10 @@ impl Collider {
                 parry3d::na::Vector3::new(center.x, center.y, center.z),
                 parry3d::na::Vector3::new(axis_angle.x, axis_angle.y, axis_angle.z)
             ),
-            physical_properties: PhysicalProperties::default()
+            physical_properties: PhysicalProperties::default(),
+            model: None,
+            renderable: None,
+            foreground: false
         }
     }
 

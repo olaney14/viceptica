@@ -1,15 +1,17 @@
 use std::{thread, time::{Duration, Instant}};
 
-use cgmath::{vec3, InnerSpace, Matrix4, Rad, SquareMatrix};
+use cgmath::{vec3, Matrix4, SquareMatrix, Vector3, Zero};
 use glow::{HasContext};
 use glutin::surface::GlSurface;
 use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
-use crate::{mesh::{flags, Mesh}, render::{CameraControlScheme, PointLight}, world::{Model, Renderable}};
+use crate::{collision::RaycastParameters, common::round_to, mesh::{flags, Mesh}, render::{CameraControlScheme, PointLight}, world::{Model, PlayerMovementMode, Renderable}};
 
+mod ui;
 mod mesh;
 mod input;
 mod world;
+mod common;
 mod render;
 mod shader;
 mod window;
@@ -19,15 +21,26 @@ mod collision;
 const MS_PER_FRAME: u64 = 8;
 
 fn main() {
-    let (gl, gl_surface, gl_context, window, event_loop) = unsafe { window::create_gl_context() };
+    let (mut gl, gl_surface, gl_context, window, event_loop) = unsafe { window::create_gl_context() };
     let mut program_bank = shader::ProgramBank::new();
     let mut texture_bank = texture::TextureBank::new();
     let mut mesh_bank = mesh::MeshBank::new();
     let mut input = input::Input::new();
     let mut world = world::World::new();
+    let mut ui = unsafe { ui::UI::new(&mut texture_bank, &gl) };
 
     unsafe {
+        gl.enable(glow::DEBUG_OUTPUT);
+        gl.debug_message_callback(|_, _, _, severity, msg| {
+            if severity == glow::DEBUG_SEVERITY_HIGH {
+                println!("[OpenGL, high severity] {}", msg);
+            } else if severity == glow::DEBUG_SEVERITY_MEDIUM {
+                println!("[OpenGL, medium severity] {}", msg);
+            }
+        });
+
         // texture_bank.load_by_name("test", &gl).unwrap();
+        program_bank.load_by_name_vf("ui", &gl).unwrap();
         world.scene.load_texture_to_material("test", &mut texture_bank, &gl);
         texture_bank.load_by_name("magic_pixel", &gl).unwrap();
         texture_bank.load_by_name("evil_pixel", &gl).unwrap();
@@ -35,26 +48,16 @@ fn main() {
         mesh_bank.add(Mesh::create_material_square("test", &gl), "square_textured");
         mesh_bank.add(Mesh::create_material_cube("test", &gl), "cube");
         mesh_bank.add(Mesh::create_cube(&gl), "blank_cube");
+        world.init(&mut mesh_bank, &gl);
     }
 
-    let square_model = Model {
-        mobile: false,
-        render: vec![
-            Renderable::Mesh("square".to_string(), Matrix4::from_translation(vec3(-0.5, 0.0, 0.0)) * Matrix4::from_scale(0.5), 0),
-            Renderable::Mesh("square_textured".to_string(), Matrix4::from_translation(vec3(0.5, 0.0, 0.0)) * Matrix4::from_scale(0.5), 0)
-        ],
-        transform: Matrix4::identity(),
-        renderable_indices: Vec::new()
-    };
-
-    let mobile = Model {
-        mobile: true,
-        render: vec![
+    let mobile = Model::new(
+        true,
+        Matrix4::identity(),
+        vec![
             Renderable::Mesh("cube".to_string(), Matrix4::from_scale(0.5), 0)
-        ],
-        transform: Matrix4::identity(),
-        renderable_indices: Vec::new()
-    };
+        ]
+    ).collider_cuboid(Vector3::zero(), vec3(0.25, 0.25, 0.25));
 
     // "concrete",
     // "end_sky",
@@ -64,9 +67,10 @@ fn main() {
     // "sparkle",
     // "watering"
 
-    let brushes = Model {
-        mobile: false,
-        render: vec![
+    let brushes = Model::new(
+        false,
+        Matrix4::identity(),
+        vec![
             Renderable::Brush("ice".to_string(), vec3(0.0, -5.0, 0.0), vec3(20.0, 1.0, 20.0), flags::EXTEND_TEXTURE),
             Renderable::Brush("concrete".to_string(), vec3(0.0, -4.0, 0.0), vec3(8.0, 1.0, 8.0), flags::EXTEND_TEXTURE),
             Renderable::Brush("pillows_old_floor".to_string(), vec3(5.0, 0.0, 0.0), vec3(1.0, 4.0, 4.0), flags::EXTEND_TEXTURE),
@@ -77,22 +81,19 @@ fn main() {
             Renderable::Brush("concrete".to_string(), vec3(1.0, -2.0, 0.0), vec3(1.0, 2.0, 1.0), flags::EXTEND_TEXTURE),
             Renderable::Brush("tar".to_string(), vec3(0.0, -5.0, 15.0), vec3(10.0, 1.0, 10.0), flags::EXTEND_TEXTURE),
             Renderable::Brush("watering".to_string(), vec3(0.0, -4.5, 0.0), vec3(10.0, 1.0, 10.0), flags::EXTEND_TEXTURE)
-        ],
-        transform: Matrix4::identity(),
-        renderable_indices: Vec::new()
-    };
+        ]
+    );
 
-    let lights = Model {
-        mobile: false,
-        render: vec![
+    let lights = Model::new(
+        false,
+        Matrix4::identity(),
+        vec![
             Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, -7.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
             Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, 7.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
             Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, 0.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
             Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(-3.0, 0.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT)
-        ],
-        transform: Matrix4::identity(),
-        renderable_indices: Vec::new()
-    };
+        ]
+    );
 
     world.scene.add_point_light(PointLight {
         constant: 1.0, linear: 0.7, quadratic: 1.8,
@@ -125,12 +126,20 @@ fn main() {
 
     unsafe { 
         world.scene.init(&mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
-        world.insert_model(square_model);
+        world.editor_data.selection_box_vao = Some(mesh::create_selection_cube(&gl));
         world.insert_model(mobile);
-        world.insert_model(brushes);
+        world.set_internal_brushes(brushes);
         world.insert_model(lights);
-        world.scene.prepare_statics(&mut mesh_bank, &gl);
+        world.set_arrows_visible(false);
+        world.move_boxes_far();
+        world.move_arrows_far();
+        world.set_boxes_visible(false);
+        world.set_model_visible(world.internal.debug_arrow, false);
+        // world.scene.prepare_statics(&mut mesh_bank, &gl);
     }
+
+    // world.select_model(selection);
+    // world.select_brush(3);
 
     let frame_sleep_duration = Duration::from_millis(MS_PER_FRAME);
     let beginning_of_application = Instant::now();
@@ -153,6 +162,32 @@ fn main() {
                         let delta_time = (beginning_of_frame - last_frame).as_secs_f32();
                         last_frame = beginning_of_frame;
 
+                        if input.get_key_pressed(Key::Named(NamedKey::Control)) && input.get_key_just_pressed(Key::Character("e".into())) {
+                            match world.scene.camera.control_sceme {
+                                CameraControlScheme::FirstPerson(..) => {
+                                    world.scene.camera.control_sceme = CameraControlScheme::Editor;
+                                    window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                                    window.set_cursor_visible(true);
+                                    world.player.movement = PlayerMovementMode::FollowCamera;
+                                    grab_cursor = false;
+                                    world.editor_data.active = true;
+                                },
+                                CameraControlScheme::Editor => {
+                                    world.scene.camera.control_sceme = CameraControlScheme::FirstPerson(true);
+                                    window.set_cursor_grab(CursorGrabMode::Confined).unwrap();
+                                    window.set_cursor_visible(false);
+                                    world.player.movement = PlayerMovementMode::FirstPerson;
+                                    grab_cursor = false;
+                                    world.editor_data.active = false;
+                                    world.deselect();
+                                }
+                            }
+                        }
+
+                        if input.get_key_pressed(Key::Named(NamedKey::Control)) && input.get_key_just_pressed(Key::Character("m".into())) {
+                            println!("{}", mesh_bank.log_loaded_models());
+                        }
+
                         if let CameraControlScheme::FirstPerson(locked) = &mut world.scene.camera.control_sceme {
                             if input.get_key_just_pressed(Key::Named(NamedKey::Escape)) && *locked {
                                 *locked = false;
@@ -161,23 +196,63 @@ fn main() {
                             }
                         }
 
-                        world.update(&input, delta_time);
-
+                        let mouse_ray = world.get_mouse_ray(input.mouse_pos.0, input.mouse_pos.1, window.inner_size().width, window.inner_size().height);
+                        if let Some(result) = world.physical_scene.raycast(true, mouse_ray.0, mouse_ray.1, 100.0, &RaycastParameters {
+                            ignore: vec![world.player.collider]
+                        }) {
+                            if result.model.is_some() {
+                                if input.get_mouse_button_just_pressed(MouseButton::Left) {
+                                    world.model_clicked(result);
+                                }
+                            } 
+                        } else {
+                            if input.get_mouse_button_just_pressed(MouseButton::Left) {
+                                world.air_clicked();
+                            }
+                        }
+                        
+                        world.update(&input, mouse_ray, delta_time);
                         world.scene.camera.update(&input, delta_time);
-
-                        world.set_model_transform(1, Matrix4::from_axis_angle(vec3(1.0, 1.0, 1.0).normalize(), Rad(elapsed_time as f32)));
+                        world.scene.update(&mut mesh_bank, &gl);
 
                         gl.clear_color(0.0, 0.0, 0.0, 1.0);
                         gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
                         world.scene.render(&mesh_bank, &mut program_bank, &texture_bank, &gl);
+                        world.post_render(&mut program_bank, &gl);
+
+                        ui.begin();
+                        // ui.frame(100, 100, 500, 200);
+                        // ui.text(20, 100, "AaAaBbBbCcCcDdDd\nEeEeFfFfGgGgHhHh");
+                        // ui.text(20, 20, "Your flehs is melting away... lol jk.\n That was a joke. its all still within you. you are storehouse for your organs\nkeep THem save \ni mean safe");
+                        // ui.pop();
+                        if ui.image_button(&input, 0, 200, 32, 32, ui::NEW_BRUSH, (32, 32)) {
+                            // let new_brush = Model::new(
+                            //     false,
+                            //     Matrix4::identity(),
+                            //     vec![
+                            //         Renderable::Brush("concrete".to_string(), vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25)), vec3(1.0, 1.0, 1.0), flags::EXTEND_TEXTURE)
+                            //     ],
+                            // );
+                            // world.insert_model(new_brush);
+                            // world.scene.prepare_statics(&mut mesh_bank, &gl);
+                            world.insert_brush(Renderable::Brush(
+                                "concrete".to_string(), 
+                                vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25)), 
+                                vec3(1.0, 1.0, 1.0), 
+                                flags::EXTEND_TEXTURE
+                            ));
+                        }
+                        ui.bake(&gl);
+                        //gl.polygon_mode(glow::FRONT_AND_BACK, glow::LINE);
+                        ui.render(&mut texture_bank, &mut program_bank, &gl);
+                        //gl.polygon_mode(glow::FRONT_AND_BACK, glow::FILL);
 
                         gl_surface.swap_buffers(&gl_context).unwrap();
                         input.update();
                         let frame_duration = Instant::now() - beginning_of_frame;
                         if let Some(duration) = frame_sleep_duration.checked_sub(frame_duration) {
                             thread::sleep(duration);
-                        }
-
+                        } 
                         window.request_redraw();
                     },
                     WindowEvent::KeyboardInput { event, .. } => {
@@ -231,6 +306,7 @@ fn main() {
                     WindowEvent::Resized(new_size) => unsafe {
                         gl.viewport(0, 0, new_size.width as i32, new_size.height as i32);
                         world.scene.camera.on_window_resized(new_size.width as f32, new_size.height as f32);
+                        ui.screen_size = (new_size.width, new_size.height);
                     },
                     _ => ()
                 }

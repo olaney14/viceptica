@@ -18,6 +18,12 @@ uniform mat4 projection;
 const float TEXTURE_LOOP_DIV = 2.0f;
 
 void main() {
+    uint skip = instanceFlags & 4;
+    if (skip > 0) {
+        gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     gl_Position = projection * view * instanceMatrix * vec4(aPos, 1.0);
     vertexColor = aColor;
     uint extend_texture = instanceFlags & 1;
@@ -30,10 +36,10 @@ void main() {
     // Texture coordinate
     if (extend_texture > 0) { // Loop texture
         // this is wrong fix it later
-        vec3 scaledNormal = normalize((instanceMatrix * vec4(aNormal, 0.0)).xyz);
-        float dotY = abs(dot(vec3(0.0f, 1.0f, 0.0f), scaledNormal));
-        float dotX = abs(dot(vec3(1.0f, 0.0f, 0.0f), scaledNormal));
-        float dotZ = abs(dot(vec3(0.0f, 0.0f, 1.0f), scaledNormal));
+        // vec3 scaledNormal = normalize((instanceMatrix * vec4(normal, 0.0)).xyz);
+        float dotY = abs(dot(vec3(0.0f, 1.0f, 0.0f), normal));
+        float dotX = abs(dot(vec3(1.0f, 0.0f, 0.0f), normal));
+        float dotZ = abs(dot(vec3(0.0f, 0.0f, 1.0f), normal));
         
         if (dotY > dotX && dotY > dotZ) {
             TexCoord = fragPos.xz / TEXTURE_LOOP_DIV;

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, fs, io::Read, path::{Path, PathBuf}};
+use std::{collections::HashMap, error::Error, path::PathBuf};
 
 use glow::{HasContext, PixelUnpackData};
 

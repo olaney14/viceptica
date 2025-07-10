@@ -1,18 +1,40 @@
 use core::f32;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::LazyLock};
 
-use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
+use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 use glow::{HasContext, NativeBuffer};
-use winit::{event::MouseButton, keyboard::Key};
+use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::PhysicalProperties, input::Input, mesh::{self, Mesh, MeshBank}, shader::ProgramBank, texture::TextureBank, world::{self, Model, Renderable}};
+use crate::{collision::PhysicalProperties, input::Input, mesh::{flags, Mesh, MeshBank}, shader::{self, ProgramBank}, texture::TextureBank, world::{self, Model, Renderable}};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-struct RenderData {
-    flags: u32,
-    transform: Matrix4<f32>
+pub struct RenderData {
+    pub flags: u32,
+    pub transform: Matrix4<f32>
 }
+
+static DUMMY_RENDER_DATA_INSTANCED: LazyLock<RenderData> = LazyLock::new(|| {
+    RenderData {
+        flags: flags::SKIP,
+        transform: Matrix4::identity()
+    }
+});
+
+#[derive(Clone, Copy, Debug)]
+pub struct MobileRenderData {
+    pub flags: u32,
+    pub transform: Matrix4<f32>,
+    pub draw: bool
+}
+
+static DUMMY_RENDER_DATA: LazyLock<MobileRenderData> = LazyLock::new(|| {
+    MobileRenderData {
+        flags: 0,
+        transform: Matrix4::identity(),
+        draw: false
+    }
+});
 
 #[derive(Debug)]
 pub struct Material {
@@ -58,15 +80,24 @@ pub struct PointLight {
 }
 
 pub struct Scene {
-    // eventually make this <String, all uniforms>
-    static_meshes: HashMap<String, Vec<RenderData>>,
+    /// Instance data for meshes that are changed infrequently<br>
+    /// Data in here is written to individual buffers in `static_instance_buffers` during `prepare_statics` if it is marked as changed
+    pub static_meshes: HashMap<String, Vec<RenderData>>,
+    /// Used in `prepare_statics` to determine what static data needs to be rebuffered
     static_meshes_updated: Vec<String>,
+    /// Instance buffers for each static model type, used in rendering and written to in `prepare_statics`
     static_instance_buffers: HashMap<String, NativeBuffer>,
-    mobile_meshes: HashMap<String, Vec<Matrix4<f32>>>,
+
+    /// Meshed rendered individually
+    pub mobile_meshes: HashMap<String, Vec<MobileRenderData>>,
+    pub foreground_meshes: HashMap<String, Vec<MobileRenderData>>,
     pub camera: Camera,
     pub materials: HashMap<String, Material>,
     pub dir_light: DirLight,
-    pub point_lights: Vec<PointLight>
+    pub point_lights: Vec<PointLight>,
+
+    /// If true, `prepare_statics` will be called on the next frame
+    pub statics_dirty: bool
 }
 
 impl Scene {
@@ -74,40 +105,39 @@ impl Scene {
     pub unsafe fn init(&mut self, textures: &mut TextureBank, meshes: &mut MeshBank, programs: &mut ProgramBank, gl: &glow::Context) {
         programs.load_by_name_vf("instanced", gl).unwrap();
         programs.load_by_name_vf("flat", gl).unwrap();
+        programs.load_by_name_vf("lines", gl).unwrap();
         self.add_default_materials();
         world::load_brushes(textures, meshes, self, &gl);
 
         gl.enable(glow::DEPTH_TEST);
     }
 
+    pub unsafe fn update(&mut self, meshes: &mut MeshBank, gl: &glow::Context) {
+        if self.statics_dirty {
+            self.prepare_statics(meshes, gl);
+            self.statics_dirty = false;
+        }
+    }
+
     pub unsafe fn render(&self, meshes: &MeshBank, programs: &mut ProgramBank, textures: &TextureBank, gl: &glow::Context) {
+        // Render instanced
         let instanced_program = programs.get_mut("instanced").unwrap();
         gl.use_program(Some(instanced_program.inner));
-        // instanced_program.uniform_1i32("textureIn", 0, gl);
+
+        // Camera uniforms
         instanced_program.uniform_matrix4f32("view", self.camera.view, gl);
         instanced_program.uniform_matrix4f32("projection", self.camera.projection, gl);
         instanced_program.uniform_3f32("viewPos", self.camera.pos.to_vec(), gl);
+
+        // Material uniforms
         instanced_program.uniform_1i32("material.diffuse", 0, gl);
         instanced_program.uniform_1i32("material.specular", 1, gl);
-        instanced_program.uniform_1i32("pointLightCount", self.point_lights.len().min(64) as i32, gl);
 
-        for i in 0..(self.point_lights.len().min(64)) {
-            let light = self.point_lights.get(i).unwrap();
-            instanced_program.uniform_3f32(&format!("pointLights[{}].position", i), light.position, gl);
-            instanced_program.uniform_1f32(&format!("pointLights[{}].constant", i), light.constant, gl);
-            instanced_program.uniform_1f32(&format!("pointLights[{}].linear", i), light.linear, gl);
-            instanced_program.uniform_1f32(&format!("pointLights[{}].quadratic", i), light.quadratic, gl);
-            instanced_program.uniform_3f32(&format!("pointLights[{}].ambient", i), light.ambient, gl);
-            instanced_program.uniform_3f32(&format!("pointLights[{}].diffuse", i), light.diffuse, gl);
-            instanced_program.uniform_3f32(&format!("pointLights[{}].specular", i), light.specular, gl);
-        }
+        // Lights
+        self.uniform_lights(instanced_program, gl);
 
-        instanced_program.uniform_3f32("dirLight.direction", self.dir_light.direction, gl);
-        instanced_program.uniform_3f32("dirLight.ambient", self.dir_light.ambient, gl);
-        instanced_program.uniform_3f32("dirLight.diffuse", self.dir_light.diffuse, gl);
-        instanced_program.uniform_3f32("dirLight.specular", self.dir_light.specular, gl);
-
-        for (name, buffer) in self.static_instance_buffers.iter() {
+        // For each current static model type
+        for (name, _) in self.static_instance_buffers.iter() {
             let mesh = meshes.get(name).unwrap();
             let material = self.materials.get(&mesh.material).unwrap();
 
@@ -128,32 +158,85 @@ impl Scene {
             );
         }
 
+        // Render individual
         let flat_program = programs.get_mut("flat").unwrap();
         gl.use_program(Some(flat_program.inner));
-        flat_program.uniform_1i32("textureIn", 0, gl);
+
+        // Camera
         flat_program.uniform_matrix4f32("view", self.camera.view, gl);
         flat_program.uniform_matrix4f32("projection", self.camera.projection, gl);
+        flat_program.uniform_3f32("viewPos", self.camera.pos.to_vec(), gl);
+
+        // Material
+        flat_program.uniform_1i32("material.diffuse", 0, gl);
+        flat_program.uniform_1i32("material.specular", 1, gl);
+
+        // Lights
+        self.uniform_lights(flat_program, gl);
         
-        for (name, transforms) in self.mobile_meshes.iter() {
-            let mesh = meshes.get(name).unwrap();
-            let material = self.materials.get(&mesh.material).unwrap();
+        // For all types of mobile meshes
+        for (name, data) in self.mobile_meshes.iter() {
+            self.render_individual(data, name, meshes, textures, flat_program, gl);
+        }
 
-            for transform in transforms.iter() {
-                flat_program.uniform_matrix4f32("model", *transform, gl);
-                gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.diffuse).map(|s| s.inner));
-                gl.bind_vertex_array(Some(mesh.vao));
+        gl.disable(glow::DEPTH_TEST);
+        // For all types of foreground meshes
+        for (name, data) in self.foreground_meshes.iter() {
+            self.render_individual(data, name, meshes, textures, flat_program, gl);
+        }
+        gl.enable(glow::DEPTH_TEST);
+    }
 
-                gl.draw_elements(
-                    glow::TRIANGLES,
-                    mesh.indices as i32,
-                    glow::UNSIGNED_SHORT,
-                    0
-                );
-            }
+    #[inline]
+    unsafe fn render_individual(&self, data: &Vec<MobileRenderData>, name: &String, meshes: &MeshBank, textures: &TextureBank, program: &mut shader::Program, gl: &glow::Context) {
+        let mesh = meshes.get(name).unwrap();
+        let material = self.materials.get(&mesh.material).unwrap();
+
+        for data in data.iter() {
+            // Skip drawing if this is set as invisible
+            if !data.draw { continue; }
+
+            // Set transform and flags individually instead as of part of the instance buffer
+            program.uniform_matrix4f32("model", data.transform, gl);
+            program.uniform_1i32("flags", data.flags as i32, gl);
+            program.uniform_1f32("material.shininess", material.shininess, gl);
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.diffuse).map(|s| s.inner));
+            gl.active_texture(glow::TEXTURE1);
+            gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.specular).map(|s| s.inner));
+            gl.bind_vertex_array(Some(mesh.vao));
+
+            gl.draw_elements(
+                glow::TRIANGLES,
+                mesh.indices as i32,
+                glow::UNSIGNED_SHORT,
+                0
+            ); 
         }
     }
 
+    #[inline]
+    unsafe fn uniform_lights(&self, program: &mut shader::Program, gl: &glow::Context) {
+        program.uniform_1i32("pointLightCount", self.point_lights.len().min(64) as i32, gl);
+
+        for i in 0..(self.point_lights.len().min(64)) {
+            let light = self.point_lights.get(i).unwrap();
+            program.uniform_3f32(&format!("pointLights[{}].position", i), light.position, gl);
+            program.uniform_1f32(&format!("pointLights[{}].constant", i), light.constant, gl);
+            program.uniform_1f32(&format!("pointLights[{}].linear", i), light.linear, gl);
+            program.uniform_1f32(&format!("pointLights[{}].quadratic", i), light.quadratic, gl);
+            program.uniform_3f32(&format!("pointLights[{}].ambient", i), light.ambient, gl);
+            program.uniform_3f32(&format!("pointLights[{}].diffuse", i), light.diffuse, gl);
+            program.uniform_3f32(&format!("pointLights[{}].specular", i), light.specular, gl);
+        }
+
+        program.uniform_3f32("dirLight.direction", self.dir_light.direction, gl);
+        program.uniform_3f32("dirLight.ambient", self.dir_light.ambient, gl);
+        program.uniform_3f32("dirLight.diffuse", self.dir_light.diffuse, gl);
+        program.uniform_3f32("dirLight.specular", self.dir_light.specular, gl);
+    }
+
+    /// Add a static mesh to the render scene
     fn add_static_mesh(&mut self, mesh: &str, transform: Matrix4<f32>, flags: u32) {
         if let Some(transforms) = self.static_meshes.get_mut(mesh) {
             transforms.push(RenderData { transform, flags });
@@ -162,48 +245,108 @@ impl Scene {
         }
     }
 
-    fn add_mobile_mesh(&mut self, mesh: &str, transform: Matrix4<f32>) {
+    /// Add a mobile mesh to the render scene
+    fn add_mobile_mesh(&mut self, mesh: &str, transform: Matrix4<f32>, flags: u32) {
         if let Some(transforms) = self.mobile_meshes.get_mut(mesh) {
-            transforms.push(transform);
+            transforms.push(MobileRenderData { transform, flags, draw: true });
         } else {
-            self.mobile_meshes.insert(mesh.to_string(), vec![transform]);
+            self.mobile_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true }]);
         }
     }
 
+    /// Add a foreground mesh to the render scene (no depth test, drawn last)
+    fn add_foreground_mesh(&mut self, mesh: &str, transform: Matrix4<f32>, flags: u32) {
+        if let Some(transforms) = self.foreground_meshes.get_mut(mesh) {
+            transforms.push(MobileRenderData { transform, flags, draw: true });
+        } else {
+            self.foreground_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true }]);
+        }
+    }
+
+    fn insert_mesh_from_model(&mut self, name: &String, transform: &Matrix4<f32>, flags: u32, model: &Model, renderable_indices: &mut Vec<usize>) {
+        if model.foreground {
+            self.add_foreground_mesh(name, model.transform * transform, flags);
+            renderable_indices.push(self.foreground_meshes.get(name).unwrap().len() - 1);
+        } else if model.mobile {
+            self.add_mobile_mesh(name, model.transform * transform, flags);
+            renderable_indices.push(self.mobile_meshes.get(name).unwrap().len() - 1);
+        } else {
+            self.add_static_mesh(name, model.transform * transform, flags);
+            if !self.static_meshes_updated.contains(name) {
+                self.static_meshes_updated.push(name.to_string());
+            }
+            renderable_indices.push(self.static_meshes.get(name).unwrap().len() - 1);
+            self.statics_dirty = true;
+        }
+    }
+
+    /// Insert a model into the world and render scene
     pub fn insert_model(&mut self, model: &Model) -> Vec<usize> {
         let mut renderable_indices = Vec::new();
         for renderable in model.render.iter() {
             match renderable {
                 Renderable::Mesh(name, transform, flags) => {
-                    if model.mobile {
-                        self.add_mobile_mesh(name, model.transform * transform);
-                        renderable_indices.push(self.mobile_meshes.get(name).unwrap().len() - 1);
-                    } else {
-                        self.add_static_mesh(name, model.transform * transform, *flags);
-                        if !self.static_meshes_updated.contains(name) {
-                            self.static_meshes_updated.push(name.to_string());
-                        }
-                        renderable_indices.push(self.static_meshes.get(name).unwrap().len() - 1);
-                    }
+                    self.insert_mesh_from_model(name, transform, *flags, model, &mut renderable_indices);
                 },
                 Renderable::Brush(texture, position, size, flags) => {
                     let name = format!("Brush_{}", texture);
                     let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
-                    if model.mobile {
-                        self.add_mobile_mesh(&name, model.transform * transform);
-                        renderable_indices.push(self.mobile_meshes.get(&name).unwrap().len() - 1);
-                    } else {
-                        self.add_static_mesh(&name, transform, *flags);
-                        if !self.static_meshes_updated.contains(&name) {
-                            self.static_meshes_updated.push(name.clone());
-                        }
-                        renderable_indices.push(self.static_meshes.get(&name).unwrap().len() - 1);
-                    }
+                    self.insert_mesh_from_model(&name, &transform, *flags, model, &mut renderable_indices);
                 }
             }
         }
 
         renderable_indices
+    }
+
+    // TODO: merge this with insert model somehow
+    /// Insert a new renderable into a preexisting model
+    pub fn amend_model(&mut self, model: &mut Model, renderable: Renderable) {
+        match renderable {
+            Renderable::Mesh(ref name, transform, flags) => {
+                let mut renderable_indices = Vec::new();
+                self.insert_mesh_from_model(name, &transform, flags, model, &mut renderable_indices);
+                model.renderable_indices.extend(renderable_indices.drain(..));
+            },
+            Renderable::Brush(ref material, position, size, flags) => {
+                let name = format!("Brush_{}", material);
+                let transform = Matrix4::from_translation(position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
+                let mut renderable_indices = Vec::new();
+                self.insert_mesh_from_model(&name, &transform, flags, model, &mut renderable_indices);
+                model.renderable_indices.extend(renderable_indices.drain(..));
+            }
+        }
+        
+        model.render.push(renderable);
+    }
+
+    fn remove_mesh(&mut self, data_index: usize, name: &String, model: &Model) {
+        if model.foreground {
+            self.foreground_meshes.get_mut(name).unwrap()[data_index] = *DUMMY_RENDER_DATA;
+        } else if model.mobile {
+            self.mobile_meshes.get_mut(name).unwrap()[data_index] = *DUMMY_RENDER_DATA;
+        } else {
+            self.static_meshes.get_mut(name).unwrap()[data_index] = *DUMMY_RENDER_DATA_INSTANCED;
+            self.mark_static(name);
+        }
+    }
+
+    /// "Removes" a renderable (replaces it with dummy data for the time being **TODO** btw)<br>
+    /// Make sure to update collider references
+    pub fn remove_renderable(&mut self, model: &mut Model, index: usize) {
+        let data_index = model.renderable_indices[index];
+        match model.render.get(index).as_ref().unwrap() {
+            Renderable::Brush(material, _, _, _) => {
+                let name = format!("Brush_{}", material);
+                self.remove_mesh(data_index, &name, model);
+            },
+            Renderable::Mesh(name, _, _) => {
+                self.remove_mesh(data_index, &name, model);
+            }
+        }
+
+        model.render.remove(index);
+        model.renderable_indices.remove(index);
     }
 
     pub unsafe fn load_texture_to_material(&mut self, texture: &str, textures: &mut TextureBank, gl: &glow::Context) {
@@ -223,20 +366,56 @@ impl Scene {
         self.add_material(Material::with_physical_properties(diffuse, specular, 32.0, phys), name);
     }
 
-    pub fn update_model_transform(&mut self, model: &Model) {
-        if !model.mobile {
-            unimplemented!();
+    /// Mark a static mesh group for rebuffering
+    pub fn mark_static(&mut self, name: &String) {
+        if !self.static_meshes_updated.contains(name) {
+            self.static_meshes_updated.push(name.clone());
+            self.statics_dirty = true;
         }
+    }
 
-        for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
-            match renderable {
-                Renderable::Mesh(name, transform, flags) => {
-                    self.mobile_meshes.get_mut(name).unwrap()[*index] = model.transform * transform;
-                },
-                Renderable::Brush(texture, position, size, flags) => {
-                    let name = format!("Brush_{}", texture);
-                    let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
-                    self.mobile_meshes.get_mut(&name).unwrap()[*index] = model.transform * transform;
+    /// Just updates the transform for a mobile mesh,<br>
+    /// But when updating a static mesh all other instances of the same type must be rebuffered so be careful
+    pub fn update_model_transform(&mut self, model: &Model) {
+        if model.foreground {
+            for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
+                match renderable {
+                    Renderable::Mesh(name, transform, _) => {
+                        self.foreground_meshes.get_mut(name).unwrap()[*index].transform = model.transform * transform;
+                    },
+                    Renderable::Brush(texture, position, size, _) => {
+                        let name = format!("Brush_{}", texture);
+                        let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
+                        self.foreground_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
+                    }
+                }
+            }
+        } else if !model.mobile {
+            for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
+                match renderable {
+                    Renderable::Mesh(name, transform, _) => {
+                        self.static_meshes.get_mut(name).unwrap()[*index].transform = model.transform * transform;
+                        self.mark_static(name);
+                    }
+                    Renderable::Brush(texture, position, size, _) => {
+                        let name = format!("Brush_{}", texture);
+                        let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
+                        self.static_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
+                        self.mark_static(&name);
+                    }
+                }
+            }
+        } else {
+            for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
+                match renderable {
+                    Renderable::Mesh(name, transform, _) => {
+                        self.mobile_meshes.get_mut(name).unwrap()[*index].transform = model.transform * transform;
+                    },
+                    Renderable::Brush(texture, position, size, _) => {
+                        let name = format!("Brush_{}", texture);
+                        let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
+                        self.mobile_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
+                    }
                 }
             }
         }
@@ -247,6 +426,7 @@ impl Scene {
             mobile_meshes: HashMap::new(),
             static_instance_buffers: HashMap::new(),
             static_meshes: HashMap::new(),
+            foreground_meshes: HashMap::new(),
             static_meshes_updated: Vec::new(),
             camera: Camera::new(),
             materials: HashMap::new(),
@@ -256,7 +436,8 @@ impl Scene {
                 diffuse: vec3(0.5, 0.5, 0.5),
                 specular: vec3(1.0, 1.0, 1.0)
             },
-            point_lights: Vec::new()
+            point_lights: Vec::new(),
+            statics_dirty: false
         }
     }
 
@@ -268,19 +449,21 @@ impl Scene {
         }
     }
 
+    /// Rebuffers all changed static models<br>
+    /// Clears `static_meshes_updated`
     pub unsafe fn prepare_statics(&mut self, meshes: &mut MeshBank, gl: &glow::Context) {
-        for updated in self.static_meshes_updated.iter() {
-            let new_buffer = if let Some(buffer) = self.static_instance_buffers.get_mut(updated) {
+        for updated in self.static_meshes_updated.drain(..) {
+            let new_buffer = if let Some(buffer) = self.static_instance_buffers.get_mut(&updated) {
                 gl.delete_buffer(*buffer);
                 *buffer = gl.create_buffer().unwrap();
                 buffer
             } else {
                 let buffer = gl.create_buffer().unwrap();
                 self.static_instance_buffers.insert(updated.to_string(), buffer);
-                self.static_instance_buffers.get(updated).unwrap()
+                self.static_instance_buffers.get(&updated).unwrap()
             };
 
-            let render_data = self.static_meshes.get(updated).unwrap();
+            let render_data = self.static_meshes.get(&updated).unwrap();
 
             let instance_data: &[u8] = core::slice::from_raw_parts(
                 render_data.as_ptr() as *const u8,
@@ -289,7 +472,7 @@ impl Scene {
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(*new_buffer));
             gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, instance_data, glow::STATIC_DRAW);
         
-            let mesh = meshes.meshes.get_mut(updated).expect("Failed to get mesh");
+            let mesh = meshes.meshes.get_mut(&updated).expect("Failed to get mesh");
             gl.bind_vertex_array(Some(mesh.vao_instanced));
             Mesh::define_instanced_vertex_attributes(gl);
             gl.bind_vertex_array(None);
@@ -312,7 +495,9 @@ pub struct Camera {
     pub up: Vector3<f32>,
     pub right: Vector3<f32>,
     pub view: Matrix4<f32>,
+    pub inverse_view: Matrix4<f32>,
     pub projection: Matrix4<f32>,
+    pub inverse_projection: Matrix4<f32>,
     pub speed: f32,
     pub control_sceme: CameraControlScheme,
     pub pitch: f32,
@@ -324,13 +509,15 @@ pub struct Camera {
 
 impl Camera {
     pub fn new() -> Self {
-        Self {
+        let mut camera = Self {
             pos: point3(0.0, 0.0, 3.0),
             direction: vec3(0.0, 0.0, -1.0),
             right: vec3(1.0, 0.0, 0.0),
             up: vec3(0.0, 1.0, 0.0),
             view: Matrix4::identity(),
+            inverse_view: Matrix4::identity(),
             projection: cgmath::perspective(Deg(80.0), 640.0 / 480.0, 0.1, 100.0),
+            inverse_projection: Matrix4::identity(),
             speed: 3.5,
             control_sceme: CameraControlScheme::FirstPerson(false), 
             pitch: 0.0,
@@ -338,16 +525,20 @@ impl Camera {
             sensitivity: 0.007,
             fov: 80.0,
             aspect: 640.0 / 480.0
-        }
+        };
+        camera.inverse_projection = camera.projection.invert().unwrap();
+        camera
     }
 
     pub fn on_window_resized(&mut self, width: f32, height: f32) {
         self.projection = cgmath::perspective(Deg(self.fov), width / height, 0.1, 100.0);
+        self.inverse_projection = self.projection.invert().unwrap();
     }
 
     pub fn set_fov(&mut self, new_fov: f32) {
         self.fov = new_fov;
         self.projection = cgmath::perspective(Deg(self.fov), self.aspect, 0.1, 100.0);
+        self.inverse_projection = self.projection.invert().unwrap();
     }
 
     fn calculate_direction(&mut self) {
@@ -393,23 +584,25 @@ impl Camera {
     pub fn update(&mut self, input: &Input, delta_time: f32) {
         match self.control_sceme {
             CameraControlScheme::Editor => {
-                if input.get_key_pressed(Key::Character("w".into())) {
-                    self.pos += self.speed * delta_time * self.direction.normalize();
-                }
-                if input.get_key_pressed(Key::Character("s".into())) {
-                    self.pos -= self.speed * delta_time * self.direction.normalize();
-                }
-                if input.get_key_pressed(Key::Character("a".into())) {
-                    self.pos += self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
-                }
-                if input.get_key_pressed(Key::Character("d".into())) {
-                    self.pos -= self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
-                }
-                if input.get_key_pressed(Key::Character("e".into())) {
-                    self.pos += self.speed * delta_time * self.up.normalize();
-                }
-                if input.get_key_pressed(Key::Character("q".into())) {
-                    self.pos -= self.speed * delta_time * self.up.normalize();
+                if !input.get_key_pressed(Key::Named(NamedKey::Control)) {
+                    if input.get_key_pressed(Key::Character("w".into())) {
+                        self.pos += self.speed * delta_time * self.direction.normalize();
+                    }
+                    if input.get_key_pressed(Key::Character("s".into())) {
+                        self.pos -= self.speed * delta_time * self.direction.normalize();
+                    }
+                    if input.get_key_pressed(Key::Character("a".into())) {
+                        self.pos += self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
+                    }
+                    if input.get_key_pressed(Key::Character("d".into())) {
+                        self.pos -= self.speed * delta_time * self.up.cross(self.direction).normalize().mul_element_wise(vec3(1.0, 0.0, 1.0));
+                    }
+                    if input.get_key_pressed(Key::Character("e".into())) {
+                        self.pos += self.speed * delta_time * self.up.normalize();
+                    }
+                    if input.get_key_pressed(Key::Character("q".into())) {
+                        self.pos -= self.speed * delta_time * self.up.normalize();
+                    }
                 }
             },
             // Camera is moved by the player in this state
@@ -420,6 +613,7 @@ impl Camera {
         self.up = self.direction.cross(self.right);
 
         self.view = Matrix4::look_at_rh(self.pos, self.pos + self.direction, vec3(0.0, 1.0, 0.0));
+        self.inverse_view = self.view.invert().unwrap();
     }
 }
 

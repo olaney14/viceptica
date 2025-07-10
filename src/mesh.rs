@@ -1,6 +1,7 @@
-use std::{collections::HashMap, error::Error, path::PathBuf, vec};
+use std::{collections::HashMap, error::Error, path::PathBuf};
 
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
+use itertools::izip;
 
 pub struct Mesh {
     pub vao: NativeVertexArray,
@@ -15,36 +16,65 @@ pub type VertexComponent = f32;
 pub type IndexComponent = u16;
 
 pub mod flags {
-    pub const EXTEND_TEXTURE: u32 = 0b01;
-    pub const FULLBRIGHT: u32 = 0b10;
+    pub const EXTEND_TEXTURE: u32 =     0b001;
+    pub const FULLBRIGHT: u32 =         0b010;
+    pub const SKIP: u32 =               0b100;
 }
 
 const VERTEX_ATTRIBUTES_COUNT: u32 = 4;
 
 impl Mesh {
-    // pub fn load_from_file_obj(name: &str, gl: glow::Context) -> Result<Self, Box<dyn Error>> {
-    //     let path = PathBuf::from(format!("res/models/{}.obj", name));
-    //     let (models, materials) = tobj::load_obj(
-    //         &path,
-    //         &tobj::LoadOptions::default()
-    //     ).expect(&format!("Failed to load obj file {}", name));
+    pub fn load_from_obj_vcolor(name: &str, r: VertexComponent, g: VertexComponent, b: VertexComponent, gl: &glow::Context) -> Result<Vec<Self>, Box<dyn Error>> {
+        let path = PathBuf::from(format!("res/models/{}.obj", name));
+        let (models, _) = tobj::load_obj(
+            &path,
+            &tobj::LoadOptions {
+                triangulate: true,
+                single_index: true,
+                ..Default::default()
+            }
+        ).expect(&format!("Failed to load obj file {}", name));
 
-    //     let materials = materials.expect("Failed to load MTL file");
+        let mut meshes = Vec::new();
 
-    //     for (i, model) in models.iter().enumerate() {
-    //         let mesh = &model.mesh;
+        for model in models.iter() {
+            let mesh = &model.mesh;
 
-    //         mesh.
-    //     }
-    // }
-    pub unsafe fn create_cube(gl: &glow::Context) -> Self {
+            // x, y, z, r, g, b, tx, ty, nx, ny, nz
+            let mut mesh_data = Vec::new();
+
+            assert!(mesh.positions.len() > 0, "Mesh had no vertices");
+            assert!(mesh.texcoords.len() > 0, "Mesh had no texcoords");
+            assert!(mesh.normals.len() > 0, "Mesh had no normals");
+
+            for (position, texture_coord, normal) in izip!(mesh.positions.chunks(3), mesh.texcoords.chunks(2), mesh.normals.chunks(3)) {
+                mesh_data.extend_from_slice(&[
+                    position[0], position[1], position[2],
+                    r, g, b,
+                    texture_coord[0], texture_coord[1],
+                    normal[0], normal[1], normal[2]
+                ]);
+            }
+
+            meshes.push(unsafe { Self::from_data(&mesh_data, &mesh.indices.iter().map(|i| *i as u16).collect::<Vec<IndexComponent>>(), gl) });
+        }
+
+        Ok(meshes)
+    }
+
+    pub fn load_from_obj(name: &str, gl: &glow::Context) -> Result<Vec<Self>, Box<dyn Error>> {
+        Self::load_from_obj_vcolor(name, 1.0, 1.0, 1.0, gl)
+    }
+
+    /// Expected layout: x, y, z, r, g, b, tx, ty, nx, ny, nz
+    unsafe fn from_data(vertices: &[VertexComponent], indices: &[IndexComponent], gl: &glow::Context) -> Self {
         let vertices_u8: &[u8] = core::slice::from_raw_parts(
-            CUBE_VERTICES.as_ptr() as *const u8,
-            CUBE_VERTICES.len() * core::mem::size_of::<VertexComponent>()
+            vertices.as_ptr() as *const u8,
+            vertices.len() * core::mem::size_of::<VertexComponent>()
         );
         let indices_u8: &[u8] = core::slice::from_raw_parts(
-            CUBE_INDICES.as_ptr() as *const u8,
-            CUBE_INDICES.len() * core::mem::size_of::<IndexComponent>()
+            indices.as_ptr() as *const u8,
+            vertices.len() * core::mem::size_of::<IndexComponent>()
         );
 
         let vao = gl.create_vertex_array().unwrap();
@@ -74,9 +104,25 @@ impl Mesh {
         Self {
             vao, vbo, ebo,
             vao_instanced,
-            indices: CUBE_INDICES.len(),
+            indices: indices.len(),
             material: "default".to_string()
         }
+    }
+
+    pub unsafe fn create_cube(gl: &glow::Context) -> Self {
+        Self::from_data(&CUBE_VERTICES, &CUBE_INDICES, gl)
+    }
+
+    pub unsafe fn create_colored_cube(r: VertexComponent, g: VertexComponent, b: VertexComponent, gl: &glow::Context) -> Self {
+        let mut verts = CUBE_VERTICES.to_vec();
+
+        for i in 0..24 {
+            verts[i * 11 + 3] = r;
+            verts[i * 11 + 4] = g;
+            verts[i * 11 + 5] = b;
+        }
+
+        Self::from_data(&verts, &CUBE_INDICES, gl)
     }
 
     pub unsafe fn create_material_cube(material: &str, gl: &glow::Context) -> Self {
@@ -86,56 +132,15 @@ impl Mesh {
     }
 
     pub unsafe fn create_square(r: VertexComponent, g: VertexComponent, b: VertexComponent, gl: &glow::Context) -> Self {
-        let vertices: Vec<VertexComponent> = vec![
+        Self::from_data(&[
              0.5,  0.5, 0.0, r, g, b, 1.0, 1.0, 0.0, 0.0, -1.0,
              0.5, -0.5, 0.0, r, g, b, 1.0, 0.0, 0.0, 0.0, -1.0,
             -0.5, -0.5, 0.0, r, g, b, 0.0, 0.0, 0.0, 0.0, -1.0,
             -0.5,  0.5, 0.0, r, g, b, 0.0, 1.0, 0.0, 0.0, -1.0
-        ];
-        let vertices_u8: &[u8] = core::slice::from_raw_parts(
-            vertices.as_ptr() as *const u8,
-            vertices.len() * core::mem::size_of::<VertexComponent>()
-        );
-
-        let indices: Vec<IndexComponent> = vec![
+        ], &[
             0, 1, 3,
             1, 2, 3
-        ];
-        let indices_u8: &[u8] = core::slice::from_raw_parts(
-            indices.as_ptr() as *const u8,
-            indices.len() * core::mem::size_of::<IndexComponent>()
-        );
-
-        let vao = gl.create_vertex_array().unwrap();
-        let vao_instanced = gl.create_vertex_array().unwrap();
-        let vbo = gl.create_buffer().unwrap();
-        let ebo = gl.create_buffer().unwrap();
-
-        gl.bind_vertex_array(Some(vao));
-
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::STATIC_DRAW);
-
-        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ebo));
-        gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, indices_u8, glow::STATIC_DRAW);
-
-        Self::define_vertex_attributes(gl);
-        
-        gl.bind_vertex_array(None);
-
-        gl.bind_vertex_array(Some(vao_instanced));
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ebo));
-        Self::define_vertex_attributes(gl);
-        gl.bind_vertex_array(None);
-        // this vao is left unfinished until static mesh data is ready
-
-        Self {
-            vao, vbo, ebo,
-            vao_instanced,
-            indices: 6,
-            material: "default".to_string()
-        }
+        ], gl)
     }
 
     pub fn with_material(mut self, material: &str) -> Self {
@@ -209,8 +214,34 @@ impl MeshBank {
         }
     }
 
+    pub fn log_loaded_models(&self) -> String {
+        let mut log = String::from("==== MESH BANK ====");
+        for (name, mesh) in self.meshes.iter() {
+            log.push_str(&format!("\n{}: {} tris, material: {}", name, mesh.indices / 3, mesh.material));
+        }
+        log.push_str("\n===================");
+
+        log
+    }
+
     pub fn get(&self, name: &str) -> Option<&Mesh> {
         self.meshes.get(name)
+    }
+
+    pub fn load_from_obj(&mut self, name: &str, gl: &glow::Context) {
+        let meshes = Mesh::load_from_obj(name, gl).expect("Failed to load .obj file");
+
+        for (i, mesh) in meshes.into_iter().enumerate() {
+            self.add(mesh, &format!("File_{}{}", name, i));
+        }
+    }
+
+    pub fn load_from_obj_vcolor(&mut self, file: &str, name: &str, r: VertexComponent, g: VertexComponent, b: VertexComponent, gl: &glow::Context) {
+        let meshes = Mesh::load_from_obj_vcolor(file, r, g, b, gl).expect("Failed to load .obj file");
+
+        for (i, mesh) in meshes.into_iter().enumerate() {
+            self.add(mesh, &format!("File_{}{}", name, i));
+        }
     }
 }
 
@@ -264,4 +295,61 @@ const CUBE_INDICES: [IndexComponent; 36] = [
     18, 19, 16,
     20, 21, 22,
     22, 23, 20
+];
+
+pub unsafe fn create_selection_cube(gl: &glow::Context) -> NativeVertexArray {
+    let vertices_u8: &[u8] = core::slice::from_raw_parts(
+        SELECTION_CUBE_VERTICES.as_ptr() as *const u8,
+        SELECTION_CUBE_VERTICES.len() * core::mem::size_of::<VertexComponent>()
+    );
+    let indices_u8: &[u8] = core::slice::from_raw_parts(
+        SELECTION_CUBE_INDICES.as_ptr() as *const u8,
+        SELECTION_CUBE_INDICES.len() * core::mem::size_of::<IndexComponent>()
+    );
+
+    let vao = gl.create_vertex_array().unwrap();
+    let vbo = gl.create_buffer().unwrap();
+    let ebo = gl.create_buffer().unwrap();
+
+    gl.bind_vertex_array(Some(vao));
+
+    gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::STATIC_DRAW);
+    gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ebo));
+    gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, indices_u8, glow::STATIC_DRAW);
+
+    gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 3 * core::mem::size_of::<f32>() as i32, 0);
+    gl.enable_vertex_attrib_array(0);
+
+    gl.bind_vertex_array(None);
+
+    vao
+}
+
+const SELECTION_CUBE_VERTICES: [VertexComponent; 24] = [
+    -0.5,  0.5,  0.5,       // 0
+     0.5,  0.5,  0.5,       // 1
+    -0.5, -0.5,  0.5,       // 2
+     0.5, -0.5,  0.5,       // 3
+    -0.5,  0.5,  -0.5,      // 4
+     0.5,  0.5,  -0.5,      // 5
+    -0.5, -0.5,  -0.5,      // 6
+     0.5, -0.5,  -0.5,      // 7
+];
+
+const SELECTION_CUBE_INDICES: [IndexComponent; 24] = [
+    0, 1,
+    1, 3,
+    3, 2,
+    2, 0,
+
+    0, 4,
+    1, 5,
+    2, 6,
+    3, 7,
+
+    0+4, 1+4,
+    1+4, 3+4,
+    3+4, 2+4,
+    2+4, 0+4,
 ];
