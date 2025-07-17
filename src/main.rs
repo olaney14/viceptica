@@ -5,7 +5,7 @@ use glow::{HasContext};
 use glutin::surface::GlSurface;
 use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
-use crate::{collision::RaycastParameters, common::round_to, mesh::{flags, Mesh}, render::{CameraControlScheme, PointLight}, world::{Model, PlayerMovementMode, Renderable}};
+use crate::{collision::RaycastParameters, common::round_to, mesh::{flags, Mesh}, render::{CameraControlScheme, PointLight}, texture::TextureBank, world::{Model, PlayerMovementMode, Renderable}};
 
 mod ui;
 mod mesh;
@@ -27,7 +27,8 @@ fn main() {
     let mut mesh_bank = mesh::MeshBank::new();
     let mut input = input::Input::new();
     let mut world = world::World::new();
-    let mut ui = unsafe { ui::UI::new(&mut texture_bank, &gl) };
+    // let mut ui = unsafe { ui::UI::new(&mut texture_bank, &gl) };
+    let mut ui = ui::implement::VicepticaUI::new(&mut texture_bank, &gl);
 
     unsafe {
         gl.enable(glow::DEBUG_OUTPUT);
@@ -39,8 +40,7 @@ fn main() {
             }
         });
 
-        // texture_bank.load_by_name("test", &gl).unwrap();
-        program_bank.load_by_name_vf("ui", &gl).unwrap();
+        ui.init(&mut texture_bank, &mut program_bank, &gl);
         world.scene.load_texture_to_material("test", &mut texture_bank, &gl);
         texture_bank.load_by_name("magic_pixel", &gl).unwrap();
         texture_bank.load_by_name("evil_pixel", &gl).unwrap();
@@ -57,15 +57,7 @@ fn main() {
         vec![
             Renderable::Mesh("cube".to_string(), Matrix4::from_scale(0.5), 0)
         ]
-    ).collider_cuboid(Vector3::zero(), vec3(0.25, 0.25, 0.25));
-
-    // "concrete",
-    // "end_sky",
-    // "evilwatering",
-    // "pillows_old_floor",
-    // "sky",
-    // "sparkle",
-    // "watering"
+    ).collider_cuboid(Vector3::zero(), vec3(0.25, 0.25, 0.25)).non_solid();
 
     let brushes = Model::new(
         false,
@@ -86,43 +78,18 @@ fn main() {
 
     let lights = Model::new(
         false,
-        Matrix4::identity(),
+        Matrix4::from_translation(vec3(-3.0, 0.0, 0.0)),
         vec![
-            Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, -7.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
-            Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, 7.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
             Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, 0.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
-            Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(-3.0, 0.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT)
         ]
-    );
-
-    world.scene.add_point_light(PointLight {
-        constant: 1.0, linear: 0.7, quadratic: 1.8,
-        ambient: vec3(0.1, 0.1, 0.1),
-        diffuse: vec3(0.5, 0.5, 0.5),
-        specular: vec3(1.0, 1.0, 1.0), 
-        position: vec3(0.0, -7.0, 0.0)
-    });
-    world.scene.add_point_light(PointLight {
-        constant: 1.0, linear: 0.35, quadratic: 0.44,
-        ambient: vec3(0.1, 0.1, 0.1),
-        diffuse: vec3(0.5, 0.5, 0.5),
-        specular: vec3(1.0, 1.0, 1.0), 
-        position: vec3(0.0, 7.0, 0.0)
-    });
-    world.scene.add_point_light(PointLight {
+    ).with_light(world.scene.add_point_light(PointLight {
         constant: 1.0, linear: 0.14, quadratic: 0.07,
         ambient: vec3(0.15, 0.05, 0.1),
         diffuse: vec3(0.8, 0.3, 0.5),
-        specular: vec3(1.0, 1.0, 1.0), 
+        specular: vec3(1.0, 1.0, 1.0),
         position: vec3(0.0, 0.0, 0.0)
-    });
-    world.scene.add_point_light(PointLight {
-        constant: 1.0, linear: 0.35, quadratic: 1.8,
-        ambient: vec3(0.1, 0.1, 0.1),
-        diffuse: vec3(0.5, 0.0, 0.5),
-        specular: vec3(0.0, 1.0, 1.0), 
-        position: vec3(-3.0, 0.0, 0.0)
-    });
+    }), vec3(0.0, 0.0, 0.0))
+    .collider_cuboid(Vector3::zero(), vec3(0.125, 0.125, 0.125));
 
     unsafe { 
         world.scene.init(&mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
@@ -135,11 +102,7 @@ fn main() {
         world.move_arrows_far();
         world.set_boxes_visible(false);
         world.set_model_visible(world.internal.debug_arrow, false);
-        // world.scene.prepare_statics(&mut mesh_bank, &gl);
     }
-
-    // world.select_model(selection);
-    // world.select_brush(3);
 
     let frame_sleep_duration = Duration::from_millis(MS_PER_FRAME);
     let beginning_of_application = Instant::now();
@@ -171,6 +134,7 @@ fn main() {
                                     world.player.movement = PlayerMovementMode::FollowCamera;
                                     grab_cursor = false;
                                     world.editor_data.active = true;
+                                    ui.play_mode = false;
                                 },
                                 CameraControlScheme::Editor => {
                                     world.scene.camera.control_sceme = CameraControlScheme::FirstPerson(true);
@@ -180,6 +144,7 @@ fn main() {
                                     grab_cursor = false;
                                     world.editor_data.active = false;
                                     world.deselect();
+                                    ui.play_mode = true;
                                 }
                             }
                         }
@@ -197,16 +162,14 @@ fn main() {
                         }
 
                         let mouse_ray = world.get_mouse_ray(input.mouse_pos.0, input.mouse_pos.1, window.inner_size().width, window.inner_size().height);
-                        if let Some(result) = world.physical_scene.raycast(true, mouse_ray.0, mouse_ray.1, 100.0, &RaycastParameters {
-                            ignore: vec![world.player.collider]
-                        }) {
+                        if let Some(result) = world.physical_scene.raycast(mouse_ray.0, mouse_ray.1, 100.0, &RaycastParameters::new().ignore(vec![world.player.collider]).select_foreground()) {
                             if result.model.is_some() {
-                                if input.get_mouse_button_just_pressed(MouseButton::Left) {
+                                if !ui.inner.mouse_captured && input.get_mouse_button_just_pressed(MouseButton::Left) {
                                     world.model_clicked(result);
                                 }
-                            } 
+                            }
                         } else {
-                            if input.get_mouse_button_just_pressed(MouseButton::Left) {
+                            if !ui.inner.mouse_captured && input.get_mouse_button_just_pressed(MouseButton::Left) {
                                 world.air_clicked();
                             }
                         }
@@ -220,32 +183,7 @@ fn main() {
                         world.scene.render(&mesh_bank, &mut program_bank, &texture_bank, &gl);
                         world.post_render(&mut program_bank, &gl);
 
-                        ui.begin();
-                        // ui.frame(100, 100, 500, 200);
-                        // ui.text(20, 100, "AaAaBbBbCcCcDdDd\nEeEeFfFfGgGgHhHh");
-                        // ui.text(20, 20, "Your flehs is melting away... lol jk.\n That was a joke. its all still within you. you are storehouse for your organs\nkeep THem save \ni mean safe");
-                        // ui.pop();
-                        if ui.image_button(&input, 0, 200, 32, 32, ui::NEW_BRUSH, (32, 32)) {
-                            // let new_brush = Model::new(
-                            //     false,
-                            //     Matrix4::identity(),
-                            //     vec![
-                            //         Renderable::Brush("concrete".to_string(), vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25)), vec3(1.0, 1.0, 1.0), flags::EXTEND_TEXTURE)
-                            //     ],
-                            // );
-                            // world.insert_model(new_brush);
-                            // world.scene.prepare_statics(&mut mesh_bank, &gl);
-                            world.insert_brush(Renderable::Brush(
-                                "concrete".to_string(), 
-                                vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25)), 
-                                vec3(1.0, 1.0, 1.0), 
-                                flags::EXTEND_TEXTURE
-                            ));
-                        }
-                        ui.bake(&gl);
-                        //gl.polygon_mode(glow::FRONT_AND_BACK, glow::LINE);
-                        ui.render(&mut texture_bank, &mut program_bank, &gl);
-                        //gl.polygon_mode(glow::FRONT_AND_BACK, glow::FILL);
+                        ui.render_and_update(&input, &mut texture_bank, &mut program_bank, &gl, &mut world);
 
                         gl_surface.swap_buffers(&gl_context).unwrap();
                         input.update();
@@ -306,7 +244,7 @@ fn main() {
                     WindowEvent::Resized(new_size) => unsafe {
                         gl.viewport(0, 0, new_size.width as i32, new_size.height as i32);
                         world.scene.camera.on_window_resized(new_size.width as f32, new_size.height as f32);
-                        ui.screen_size = (new_size.width, new_size.height);
+                        ui.inner.screen_size = (new_size.width, new_size.height);
                     },
                     _ => ()
                 }
@@ -337,5 +275,5 @@ fn set_mouse_pos(x: i32, y: i32) -> Result<(), String> {
 
 #[cfg(not(target_os = "windows"))]
 fn set_mouse_pos(x: i32, y: i32) -> Result<(), String> {
-    eprintln!("Unimplemented");
+    todo!();
 }

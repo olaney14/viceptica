@@ -4,7 +4,7 @@ use cgmath::{vec3, vec4, AbsDiffEq, ElementWise, EuclideanSpace, InnerSpace, Mat
 use glow::{HasContext, NativeVertexArray};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, Scene}, shader::ProgramBank, texture::TextureBank};
+use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, PointLight, Scene}, shader::ProgramBank, texture::TextureBank};
 
 pub const BRUSH_TEXTURES: [&str; 8] = [
     "concrete",
@@ -81,6 +81,17 @@ impl EditorModeData {
 
         None
     }
+
+    pub fn get_selected_model(&self) -> Option<usize> {
+        if let Some(selected) = &self.selected_object {
+            match selected {
+                Selection::Model(model) => return Some(*model),
+                _ => ()
+            }
+        }
+
+        None
+    }
 }
 
 pub struct World {
@@ -121,8 +132,7 @@ impl Default for InternalModels {
 }
 
 pub unsafe fn load_brushes(textures: &mut TextureBank, meshes: &mut MeshBank, scene: &mut Scene, gl: &glow::Context) {
-    for (i, texture) in BRUSH_TEXTURES.iter().enumerate() {
-        // textures.load_by_name(&texture, gl).unwrap();
+    for (_, texture) in BRUSH_TEXTURES.iter().enumerate() {
         scene.load_material_diff_spec(&texture, &texture, &format!("{}_specular", texture), textures, gl);
         meshes.add(Mesh::create_material_cube(&texture, gl), &format!("Brush_{}", texture));
     }
@@ -185,22 +195,23 @@ impl World {
         }
 
         // Collider is slightly larger than the arrow to make them less annoying to click
-        self.internal.arrow_px = self.insert_model(Model::from_loaded_file("arrowred", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0));
-        self.internal.arrow_py = self.insert_model(Model::from_loaded_file("arrowblue", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0));
-        self.internal.arrow_pz = self.insert_model(Model::from_loaded_file("arrowgreen", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, 0.15), vec3(0.375, 0.375, 1.75) / 2.0));
-        self.internal.arrow_nx = self.insert_model(Model::from_loaded_file("arrowred", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(-0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0));
-        self.internal.arrow_ny = self.insert_model(Model::from_loaded_file("arrowblue", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, -0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0));
-        self.internal.arrow_nz = self.insert_model(Model::from_loaded_file("arrowgreen", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, -0.15), vec3(0.375, 0.375, 1.75) / 2.0));
+        self.internal.arrow_px = self.insert_model(Model::from_loaded_file("arrowred", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0).non_solid());
+        self.internal.arrow_py = self.insert_model(Model::from_loaded_file("arrowblue", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0).non_solid());
+        self.internal.arrow_pz = self.insert_model(Model::from_loaded_file("arrowgreen", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, 0.15), vec3(0.375, 0.375, 1.75) / 2.0).non_solid());
+        self.internal.arrow_nx = self.insert_model(Model::from_loaded_file("arrowred", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(-0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0).non_solid());
+        self.internal.arrow_ny = self.insert_model(Model::from_loaded_file("arrowblue", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, -0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0).non_solid());
+        self.internal.arrow_nz = self.insert_model(Model::from_loaded_file("arrowgreen", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, -0.15), vec3(0.375, 0.375, 1.75) / 2.0).non_solid());
         self.internal.brushes = self.insert_model(Model::new(false, Matrix4::identity(), Vec::new()));
         self.internal.debug_arrow = self.insert_model(Model::from_loaded_file("arrow", &meshes).unwrap().fullbright().mobile());
-        self.internal.box_px = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground());
-        self.internal.box_nx = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground());
-        self.internal.box_py = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground());
-        self.internal.box_ny = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground());
-        self.internal.box_pz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground());
-        self.internal.box_nz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground());
+        self.internal.box_px = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
+        self.internal.box_nx = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
+        self.internal.box_py = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
+        self.internal.box_ny = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
+        self.internal.box_pz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
+        self.internal.box_nz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
     }
 
+    /// set up editor data for movement/scaling and handle switching
     fn select_brush(&mut self, brush: usize) {
         if let Some(current) = self.editor_data.get_selected_brush() {
             if current == brush {
@@ -233,6 +244,41 @@ impl World {
         }
     }
 
+    // deduplicate these two somehow?
+    fn select_model(&mut self, model: usize) {
+        if let Some(current) = self.editor_data.get_selected_model() {
+            if current != model {
+                self.editor_data.selection_type = SelectionType::Movement;
+                self.editor_data.selected_object = Some(Selection::Model(model));
+                self.set_boxes_visible(false);
+                self.move_boxes_far();
+            }
+        } else {
+            self.editor_data.selection_type = SelectionType::Movement;
+            self.editor_data.selected_object = Some(Selection::Model(model));
+            self.set_boxes_visible(false);
+            self.move_boxes_far();
+        }
+    }
+
+    // this is like REALLY bad
+    fn can_be_selected(&mut self, model: usize) -> bool {
+        model != self.internal.arrow_nx &&
+        model != self.internal.arrow_px &&
+        model != self.internal.arrow_ny &&
+        model != self.internal.arrow_py &&
+        model != self.internal.arrow_nz &&
+        model != self.internal.arrow_pz &&
+        model != self.internal.box_nx &&
+        model != self.internal.box_px &&
+        model != self.internal.box_ny &&
+        model != self.internal.box_py &&
+        model != self.internal.box_nz &&
+        model != self.internal.box_pz &&
+        model != self.internal.brushes &&
+        model != self.internal.debug_arrow
+    }
+
     pub fn model_clicked(&mut self, result: RaycastResult) {
         if self.editor_data.active {
             if let Some(model) = result.model {
@@ -241,6 +287,11 @@ impl World {
                         self.set_arrows_visible(true);
                         self.select_brush(renderable);
                     }
+                }
+
+                if self.can_be_selected(model) {
+                    self.set_arrows_visible(true);
+                    self.select_model(model);
                 }
 
                 if model == self.internal.arrow_nx || model == self.internal.arrow_px || model == self.internal.box_nx || model == self.internal.box_px {
@@ -281,6 +332,11 @@ impl World {
     }
 
     pub fn insert_model(&mut self, mut model: Model) -> usize {
+        for light in model.lights.iter() {
+            let position = light.0 + (model.transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+            self.scene.point_lights[light.1].position = position;
+        }
+
         for i in 0..self.models.len() {
             if self.models[i].is_none() {
                 model.index = Some(i);
@@ -299,11 +355,52 @@ impl World {
     }
 
     pub fn remove_model(&mut self, index: usize) -> Result<(), String> {
-        if let Some(model) = self.models.get_mut(index) {
-            *model = None;
+        if self.models[index].is_some() {
+            for i in 0..self.models[index].as_ref().unwrap().lights.len() {
+                self.remove_point_light(self.models[index].as_ref().unwrap().lights[i].1);
+            }
+        }
+
+        if let Some(mut model) = self.models[index].take() {
+            for i in 0..model.renderable_indices.len() {
+                self.scene.remove_renderable(&mut model, i);
+            }
+            for i in 0..model.colliders.len() {
+                if model.colliders[i].is_some() {
+                    self.physical_scene.remove_collider(model.colliders[i].unwrap()).unwrap();
+                }
+            }
             Ok(())
         } else {
             Err("Index out of bounds".to_string())
+        }
+    }
+
+    /// This also removes the point light from the model
+    pub fn remove_point_light(&mut self, light: usize) {    
+        let mut removed = false;
+        for model in self.models.iter_mut() {
+            if let Some(model) = model {
+                let mut light_index = None;
+                for (_, index) in model.lights.iter_mut() {
+                    if *index > light {
+                        *index -= 1;
+                    } else if *index == light {
+                        light_index = Some(*index);
+                    }
+                }
+
+                if let Some(model_light) = light_index {
+                    model.lights.remove(model_light);
+                    removed = true;
+                }
+            }
+        }
+
+        self.scene.point_lights.remove(light);
+
+        if !removed {
+            eprintln!("Removed light was not found in any model");
         }
     }
 
@@ -331,19 +428,6 @@ impl World {
 
     /// Panics if the internal brush model has been deleted or if `brush` is an invalid index
     pub fn set_brush_origin(&mut self, brush_index: usize, new_origin: Vector3<f32>) {
-        // let brush = self.models[self.internal.brushes].as_mut().unwrap().render.get_mut(brush_index).unwrap();
-
-        // if let Renderable::Brush(material, origin, size, _) = brush {
-        //     *origin = new_origin;
-        //     let name = format!("Brush_{}", material);
-        //     self.scene.mark_static(&name);
-        //     // this counts on the transform of self.internal.brushes being identity
-        //     let transform = Matrix4::from_translation(*origin) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
-        //     self.scene.static_meshes.get_mut(&name).unwrap()[self.models[self.internal.brushes].as_ref().unwrap().renderable_indices[brush_index]].transform = transform;
-        //     self.update_colliders(self.internal.brushes);
-        // } else {
-        //     panic!("Non-brush in internal brush model");
-        // }
         self.set_brush_origin_scale(brush_index, new_origin, None);
     }
 
@@ -382,27 +466,53 @@ impl World {
         }
     }
 
+    // oh my god i love rust
     pub fn set_model_transform(&mut self, index: usize, new_transform: Matrix4<f32>) {
-        let model = self.models.get_mut(index).unwrap().as_mut().unwrap();
+        {
+            let model = self.models.get_mut(index).unwrap().as_mut().unwrap();
 
-        model.transform = new_transform;
-        self.scene.update_model_transform(model);
-        self.update_colliders(index);
+            model.transform = new_transform;
+            self.scene.update_model_transform(model);
+            self.update_colliders(index);
+        }
+        {
+            let model = self.models.get(index).unwrap().as_ref().unwrap();
+            for light in model.lights.iter() {
+                let position = light.0 + (new_transform* vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+                self.scene.point_lights[light.1].position = position;
+            }
+        }
     }
 
     pub fn get_model_transform(&self, index: usize) -> Option<Matrix4<f32>> {
         self.models[index].as_ref().map(|o| o.transform)
     }
 
-    fn adorn_arrows_brush(&mut self, brush: usize) {
-        let (position, scale) = self.get_brush_adornment_transform(brush);
-
+    fn position_arrows(&mut self, position: Vector3<f32>, scale: Vector3<f32>) {
         self.set_model_transform(self.internal.arrow_px, Matrix4::from_translation(position + vec3(scale.x, 0.0, 0.0)) * Matrix4::from_axis_angle(Vector3::unit_z(), Rad(-f32::consts::PI / 2.0)) * Matrix4::from_scale(0.5));
         self.set_model_transform(self.internal.arrow_nx, Matrix4::from_translation(position - vec3(scale.x, 0.0, 0.0)) * Matrix4::from_axis_angle(Vector3::unit_z(), Rad(f32::consts::PI / 2.0)) * Matrix4::from_scale(0.5));
         self.set_model_transform(self.internal.arrow_py, Matrix4::from_translation(position + vec3(0.0, scale.y, 0.0)) * Matrix4::from_scale(0.5));
         self.set_model_transform(self.internal.arrow_ny, Matrix4::from_translation(position - vec3(0.0, scale.y, 0.0)) * Matrix4::from_axis_angle(Vector3::unit_x(), Rad(f32::consts::PI)) * Matrix4::from_scale(0.5));
         self.set_model_transform(self.internal.arrow_pz, Matrix4::from_translation(position + vec3(0.0, 0.0, scale.z)) * Matrix4::from_axis_angle(Vector3::unit_x(), Rad(f32::consts::PI / 2.0)) * Matrix4::from_scale(0.5));
         self.set_model_transform(self.internal.arrow_nz, Matrix4::from_translation(position - vec3(0.0, 0.0, scale.z)) * Matrix4::from_axis_angle(Vector3::unit_x(), Rad(-f32::consts::PI / 2.0)) * Matrix4::from_scale(0.5));
+    }
+
+    fn adorn_arrows_model(&mut self, model: usize) {
+        let (mut position, half_extents) = self.models.get(model).unwrap().as_ref().unwrap().extents.unwrap_or((vec3(0.0, 0.0, 0.0), vec3(0.5, 0.5, 0.5)));
+        position += (self.models.get(model).unwrap().as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+        let scale = half_extents + vec3(1.0, 1.0, 1.0);
+
+        self.position_arrows(position, scale);
+
+        self.editor_data.selection_box_visible = true;
+        self.editor_data.selection_box_pos = position;
+        self.editor_data.selection_box_scale = half_extents;
+    }
+
+    fn adorn_arrows_brush(&mut self, brush: usize) {
+        let (position, scale) = self.get_brush_adornment_transform(brush);
+
+        self.position_arrows(position, scale);
     
         self.editor_data.selection_box_visible = true;
         self.editor_data.selection_box_pos = position;
@@ -546,6 +656,12 @@ impl World {
                             Selection::Brush(brush) => {
                                 self.set_brush_origin(*brush, new_origin);
                             },
+                            Selection::Model(model) => {
+                                let transform = self.get_model_transform(*model).unwrap();
+                                let current_origin = (transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+                                let new_transform = Matrix4::from_translation(new_origin - current_origin) * transform;
+                                self.set_model_transform(*model, new_transform);
+                            },
                             _ => todo!()
                         }
                     }
@@ -615,6 +731,31 @@ impl World {
         }
     }
 
+    fn duplicate_model(&mut self, model: usize) -> usize {
+        let model = self.models.get(model).unwrap().as_ref().unwrap();
+
+        let mut new_model = Model {
+            transform: model.transform,
+            solid: model.solid,
+            foreground: model.foreground,
+            extents: model.extents.clone(),
+            index: None,
+            insert_collider: model.insert_collider.clone(),
+            colliders: Vec::new(),
+            lights: Vec::new(),
+            mobile: model.mobile,
+            render: model.render.clone(),
+            renderable_indices: Vec::new()
+        };
+
+        for (offset, i) in model.lights.iter() {
+            let cloned_light = self.scene.add_point_light(self.scene.point_lights[*i].clone());
+            new_model.lights.push((*offset, cloned_light));
+        }
+
+        self.insert_model(new_model)
+    }
+
     pub fn update(&mut self, input: &Input, mouse_ray: (Vector3<f32>, Vector3<f32>), delta_time: f32) {
         self.player.update(&self.scene.camera, input);
 
@@ -632,8 +773,13 @@ impl World {
                         _ => ()
                     }
                 },
-                Selection::Model(_) => {
-                    todo!();
+                Selection::Model(model) => {
+                    match self.editor_data.selection_type {
+                        SelectionType::Movement => {
+                            self.adorn_arrows_model(*model);
+                        },
+                        _ => ()
+                    }
                 },
                 _ => todo!()
             }
@@ -650,6 +796,7 @@ impl World {
                         
                         brushes.colliders.remove(*brush);
 
+                        // This is only local to the brushes model
                         for collider in brushes.colliders.iter() {
                             if let Some(collider) = collider {
                                 if let Some(collider) = self.physical_scene.colliders.get_mut(*collider).unwrap() {
@@ -665,8 +812,10 @@ impl World {
                         self.deselect();
                         selection = None;
                     },
-                    Selection::Model(_) => {
-                        todo!();
+                    Selection::Model(model) => {
+                        self.remove_model(*model).unwrap();
+                        self.deselect();
+                        selection = None;
                     },
                     _ => todo!()
                 }
@@ -682,6 +831,10 @@ impl World {
                         let brush = self.models.get(self.internal.brushes).unwrap().as_ref().unwrap().render[*brush_index].clone();
                         let index = self.insert_brush(brush);
                         self.select_brush(index);
+                    },
+                    Selection::Model(model) => {
+                        let duplicate = self.duplicate_model(*model);
+                        self.select_model(duplicate);
                     },
                     _ => todo!()
                 }
@@ -707,6 +860,10 @@ impl World {
                     // small performance improvement possible
                     let (pos, scale) = self.get_brush_adornment_transform(*brush);
                     (pos, (scale - vec3(1.0, 1.0, 1.0)) * 2.0)
+                },
+                Selection::Model(model) => {
+                    // model_scale goes unused for now
+                    ((self.models.get(*model).unwrap().as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz(), Vector3::zero())
                 },
                 _ => todo!()
             };
@@ -798,7 +955,11 @@ pub struct Model {
     /// 0 -> #`render` all correspond with eachother, onwards is from `insert_collider`
     pub colliders: Vec<Option<usize>>,
     pub index: Option<usize>,
-    pub insert_collider: Option<ModelCollider>
+    pub insert_collider: Option<ModelCollider>,
+    pub solid: bool,
+    /// offset, half extents
+    pub extents: Option<(Vector3<f32>, Vector3<f32>)>,
+    pub lights: Vec<(Vector3<f32>, usize)>
 }
 
 impl Model {
@@ -811,7 +972,10 @@ impl Model {
             colliders: Vec::new(),
             index: None,
             insert_collider: None,
-            foreground: false
+            foreground: false,
+            solid: true,
+            extents: None,
+            lights: Vec::new()
         }
     }
 
@@ -828,7 +992,10 @@ impl Model {
             colliders: Vec::new(),
             index: None,
             insert_collider: None,
-            foreground: false
+            foreground: false,
+            solid: true,
+            extents: None,
+            lights: Vec::new()
         };
 
         while let Some(_) = meshes.get(&format!("File_{}{}", file, current_index)) {
@@ -893,6 +1060,16 @@ impl Model {
 
     pub fn collider_cuboid(mut self, offset: Vector3<f32>, half_extents: Vector3<f32>) -> Self {
         self.insert_collider(ModelCollider::Cuboid { offset, half_extents });
+        self
+    }
+
+    pub fn non_solid(mut self) -> Self {
+        self.solid = false;
+        self
+    }
+
+    pub fn with_light(mut self, index: usize, position: Vector3<f32>) -> Self {
+        self.lights.push((position, index));
         self
     }
 }

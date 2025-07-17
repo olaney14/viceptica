@@ -69,6 +69,7 @@ pub struct DirLight {
     pub specular: Vector3<f32>
 }
 
+#[derive(Clone)]
 pub struct PointLight {
     pub position: Vector3<f32>,
     pub constant: f32,
@@ -110,6 +111,7 @@ impl Scene {
         world::load_brushes(textures, meshes, self, &gl);
 
         gl.enable(glow::DEPTH_TEST);
+        gl.enable(glow::CULL_FACE);
     }
 
     pub unsafe fn update(&mut self, meshes: &mut MeshBank, gl: &glow::Context) {
@@ -299,7 +301,6 @@ impl Scene {
         renderable_indices
     }
 
-    // TODO: merge this with insert model somehow
     /// Insert a new renderable into a preexisting model
     pub fn amend_model(&mut self, model: &mut Model, renderable: Renderable) {
         match renderable {
@@ -441,12 +442,14 @@ impl Scene {
         }
     }
 
-    pub fn add_point_light(&mut self, light: PointLight) {
+    pub fn add_point_light(&mut self, light: PointLight) -> usize {
         self.point_lights.push(light);
 
         if self.point_lights.len() > 64 {
             eprintln!("Warning: Too many point lights in scene");
         }
+        
+        self.point_lights.len() - 1
     }
 
     /// Rebuffers all changed static models<br>

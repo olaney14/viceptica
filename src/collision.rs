@@ -52,6 +52,7 @@ impl PhysicalScene {
         for i in 0..self.colliders.len() {
             if i != index {
                 if self.colliders[i].is_none() { continue; }
+                if !self.colliders.get(i).unwrap().as_ref().unwrap().solid { continue; }
                 if let Some(contact) = self.colliders.get(index).unwrap().as_ref().unwrap().get_contact(self.colliders.get(i).unwrap().as_ref().unwrap()) {
                     let initial_velocity = final_velocity;
                     let hit_normal = vec3(contact.normal2.x, contact.normal2.y, contact.normal2.z);
@@ -94,18 +95,19 @@ impl PhysicalScene {
         }
     }
 
-    pub fn raycast(&mut self, select_foreground: bool, origin: Vector3<f32>, direction: Vector3<f32>, distance: f32, params: &RaycastParameters) -> Option<RaycastResult> {
+    pub fn raycast(&mut self, origin: Vector3<f32>, direction: Vector3<f32>, distance: f32, params: &RaycastParameters) -> Option<RaycastResult> {
         let mut closest_intersection = f32::MAX;
         let mut result: Option<RaycastResult> = None;
         let ray = Ray::new(Point3::new(origin.x, origin.y, origin.z), parry3d::na::Vector3::new(direction.x, direction.y, direction.z).normalize());
         
         // Check for meshes in the foreground (e.g. movement arrows)
-        if select_foreground {
+        if params.select_foreground {
             for i in 0..self.colliders.len() {
                 if params.ignore.contains(&i) { continue; }
                 
                 if let Some(collider) = &self.colliders[i] {
                     if collider.foreground {
+                        if params.respect_solid && !collider.solid { continue; }
                         if let Some(intersection) = collider.shape.cast_ray_and_get_normal(&collider.pos, &ray, distance, true) {
                             if intersection.time_of_impact < closest_intersection {
                                 closest_intersection = intersection.time_of_impact;
@@ -132,6 +134,7 @@ impl PhysicalScene {
             if params.ignore.contains(&i) { continue; }
 
             if let Some(collider) = &self.colliders[i] {
+                if params.respect_solid && !collider.solid { continue; }
                 if let Some(intersection) = collider.shape.cast_ray_and_get_normal(&collider.pos, &ray, distance, true) {
                     if intersection.time_of_impact < closest_intersection {
                         closest_intersection = intersection.time_of_impact;
@@ -160,13 +163,17 @@ pub struct RaycastResult {
 }
 
 pub struct RaycastParameters {
-    pub ignore: Vec<usize>
+    pub ignore: Vec<usize>,
+    pub select_foreground: bool,
+    pub respect_solid: bool
 }
 
 impl RaycastParameters {
     pub fn new() -> Self {
         Self {
-            ignore: Vec::new()
+            ignore: Vec::new(),
+            respect_solid: false,
+            select_foreground: false
         }
     }
 
@@ -174,10 +181,21 @@ impl RaycastParameters {
         self.ignore = ignore;
         self
     }
+
+    pub fn respect_solid(mut self) -> Self {
+        self.respect_solid = true;
+        self
+    }
+
+    pub fn select_foreground(mut self) -> Self {
+        self.select_foreground = true;
+        self
+    }
 }
 
 impl Model {
     fn insert_model_collider(&mut self, model_collider: &ModelCollider, model_position: Vector3<f32>, world: &mut World) {
+        let mut extents: Option<Aabb> = None;
         match model_collider {
             ModelCollider::Cuboid { offset, half_extents } => {
                 let mut collider = Collider::cuboid(*offset + model_position, *half_extents * 2.0, Vector3::zero());
@@ -185,6 +203,14 @@ impl Model {
                 collider.renderable = None;
                 collider.model = self.index;
                 collider.foreground = self.foreground;
+                collider.solid = self.solid;
+
+                if let Some(extents) = &mut extents {
+                    extents.merge(&collider.bounding);
+                } else {
+                    extents = Some(collider.bounding);
+                }
+
                 self.colliders.push(Some(world.physical_scene.add_collider(collider)));
             },
             ModelCollider::Multiple { colliders } => {
@@ -192,6 +218,13 @@ impl Model {
                     self.insert_model_collider(collider, model_position, world);
                 }
             }
+        }
+
+        if let Some(extents) = extents {
+            self.extents = Some((
+                vec3(extents.center().x, extents.center().y, extents.center().z) - model_position,
+                vec3(extents.half_extents().x, extents.half_extents().y, extents.half_extents().z)
+            ));
         }
     }
 
@@ -208,6 +241,7 @@ impl Model {
                     collider.renderable = Some(i);
                     collider.model = self.index;
                     collider.foreground = self.foreground;
+                    collider.solid = self.solid;
                     self.colliders.push(Some(world.physical_scene.add_collider(collider)));
                 },
                 _ => {
@@ -233,6 +267,7 @@ impl World {
                 collider.renderable = None;
                 collider.model = Some(model);
                 collider.foreground = self.models[model].as_ref().unwrap().foreground;
+                collider.solid = self.models[model].as_ref().unwrap().solid;
                 let collider_index = self.models[model].as_ref().unwrap().colliders[i].unwrap();
                 self.physical_scene.colliders[collider_index] = Some(collider);
             },
@@ -256,6 +291,7 @@ impl World {
                     collider.renderable = Some(i);
                     collider.model = Some(model);
                     collider.foreground = self.models[model].as_ref().unwrap().foreground;
+                    collider.solid = self.models[model].as_ref().unwrap().solid;
                     let collider_index = self.models[model].as_ref().unwrap().colliders[i].unwrap();
                     self.physical_scene.colliders[collider_index] = Some(collider);
                 },
@@ -297,6 +333,7 @@ impl Default for PhysicalProperties {
 
 pub struct Collider {
     pub bounding: Aabb,
+    pub solid: bool,
 
     /// Only affects mouse raycasting, if this is true raycast will prioritize this
     pub foreground: bool,
@@ -349,7 +386,8 @@ impl Collider {
             physical_properties: PhysicalProperties::default(),
             model: None,
             renderable: None,
-            foreground: false
+            foreground: false,
+            solid: true
         }
     }
 

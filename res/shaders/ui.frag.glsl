@@ -2,13 +2,12 @@ out vec4 FragColor;
 
 in vec2 TexCoord;
 
-uniform sampler2D atlas;
+uniform sampler2D tex;
 
 void main() {
-    vec4 texColor = vec4(texture(atlas, TexCoord));
+    vec4 texColor = vec4(texture(tex, TexCoord));
     if (texColor.a < 0.1) {
         discard;
     }
     FragColor = texColor;
-    //FragColor = vec4(0.0, 0.0, 0.0, 1.0);
 }
