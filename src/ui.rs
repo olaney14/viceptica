@@ -9,7 +9,7 @@ use crate::{input::Input, shader::ProgramBank, texture::TextureBank};
 const NINECELL_BLOCK: (u32, u32) = (0, 48);
 const FONT_BLOCK: (u32, u32) = (0, 128);
 pub const NEW_BRUSH: (u32, u32) = (48, 32);
-const FONT_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .!,-�?§µ";
+const FONT_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .!,- ?  _";
 const FONT_WIDTH: usize = 10;
 const FONT_HEIGHT: usize = 8;
 
@@ -25,8 +25,7 @@ pub enum FrameInteraction {
     Close,
     DragBegin,
     ResizeBegin,
-    ScrollUp,
-    ScrollDown
+    Scroll(f32)
 }
 
 impl FrameType {
@@ -121,8 +120,6 @@ pub struct UI {
     origin: (i32, i32),
     pub screen_size: (u32, u32),
     pub indices: i32,
-    pub atlas_height: u32,
-    pub extern_texture_quads: HashMap<String, NativeVertexArray>,
     pub current_z: f32,
     pub mouse_captured: bool
 }
@@ -132,7 +129,7 @@ impl UI {
         let vbo = gl.create_buffer().unwrap();
         let ebo = gl.create_buffer().unwrap();
         let vao = gl.create_vertex_array().unwrap();
-        textures.load_by_name("ui_atlas", gl).expect("Failed to load ui atlas");
+        // textures.load_by_name("ui_atlas", gl).expect("Failed to load ui atlas");
         Self {
             vao, vbo, ebo,
             elements: Vec::new(),
@@ -140,8 +137,6 @@ impl UI {
             origin: (0, 0),
             screen_size: (640 * 2, 480 * 2),
             indices: 0,
-            atlas_height: textures.get("ui_atlas").unwrap().height,
-            extern_texture_quads: HashMap::new(),
             current_z: 0.0,
             mouse_captured: false
         }
@@ -170,7 +165,7 @@ impl UI {
         self.set_clip_rect();
         self.container_stack.push(Container {
             index: self.elements.len() - 1,
-            clip_rect: (x + self.origin.0, y + self.origin.1, w, h)
+            clip_rect: (x + self.origin.0, y + self.origin.1 + 16, w, h - 16)
         });
         self.origin = (x + self.origin.0, y + self.origin.1);
         self.current_z += Z_INCREMENT_MAJOR;
@@ -189,6 +184,15 @@ impl UI {
         true
     }
 
+    pub fn mouse_in_frame(&self, mpx: i32, mpy: i32) -> bool {
+        if let Some(container) = self.container_stack.last() {
+            return mpx > container.clip_rect.0 && mpx < container.clip_rect.0 + container.clip_rect.2 as i32
+                && mpy > container.clip_rect.1 - 16 && mpy < container.clip_rect.1 + container.clip_rect.3 as i32 + 16
+        }
+
+        false
+    }
+
     pub fn interactable_frame(&mut self, input: &Input, x: i32, y: i32, w: u32, h: u32) -> Option<FrameInteraction> {
         self._frame(x, y, w, h, FrameType::Interactable);
 
@@ -203,7 +207,7 @@ impl UI {
             self.mouse_captured = true;
         }
 
-        if self.mouse_in_clip_rect(mpx, mpy) && input.get_mouse_button_just_pressed(MouseButton::Left) {
+        if self.mouse_in_frame(mpx, mpy) && input.get_mouse_button_just_pressed(MouseButton::Left) {
             if mouse_within_x {
                 return Some(FrameInteraction::Close);
             } else if mouse_within_resize {
@@ -213,7 +217,20 @@ impl UI {
             }
         }
 
+        if self.mouse_in_frame(mpx, mpy) && mouse_within_body {
+            if input.scroll != 0.0 {
+                return Some(FrameInteraction::Scroll(input.scroll));
+            }
+        }
+
         None
+    }
+
+    pub fn interactable_frame_titled(&mut self, input: &Input, x: i32, y: i32, w: u32, h: u32, title: &str) -> Option<FrameInteraction> {
+        self.current_z += Z_INCREMENT_MAJOR;
+        self.text(x + 4, y + 2, title);
+        self.current_z -= Z_INCREMENT_MAJOR;
+        self.interactable_frame(input, x, y, w, h)
     }
 
     pub fn text(&mut self, x: i32, y: i32, message: &str) {
@@ -226,7 +243,7 @@ impl UI {
 
     pub fn image(&mut self, x: i32, y: i32, w: u32, h: u32, tx: (u32, u32), tx_size: (u32, u32), texture: &str) {
         self.elements.push(UIElement::new(ElementType::TextureLabel(TextureLabel {
-            x, y, w, h,
+            x: x + self.origin.0, y: y + self.origin.1, w, h,
             tx: tx.0, ty: tx.1,
             th: tx_size.1, tw: tx_size.0, texture: texture.to_string()
         }), self.current_z));
@@ -267,11 +284,9 @@ impl UI {
         gl.enable(glow::SCISSOR_TEST);
 
         let ui_program = programs.get_mut("ui").unwrap();
-        // let atlas_texture = textures.get("ui_atlas").expect("UI atlas not loaded");
 
         gl.use_program(Some(ui_program.inner));
         ui_program.uniform_2f32("screenSize", vec2(self.screen_size.0 as f32, self.screen_size.1 as f32), gl);
-        // ui_program.uniform_2f32("atlasSize", vec2(atlas_texture.width as f32, atlas_texture.height as f32), gl);
         ui_program.uniform_1i32("tex", 0, gl);
         // core profile requires a vao bound when drawing arrays even though ui shader is attributeless
         gl.bind_vertex_array(Some(self.vao));
@@ -367,7 +382,7 @@ pub mod implement {
     use cgmath::vec3;
     use winit::event::MouseButton;
 
-    use crate::{common::round_to, input::{self, Input}, mesh::flags, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, UI}, world::{Renderable, World}};
+    use crate::{common::round_to, input::{self, Input}, mesh::flags, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, FONT_CHARS, UI}, world::{Renderable, World}};
 
     pub struct VicepticaUI {
         pub inner: UI,
@@ -378,7 +393,17 @@ pub mod implement {
     }
 
     enum EditorWindowType {
-        Test
+        Test,
+        MaterialPicker
+    }
+
+    impl EditorWindowType {
+        fn title(&self) -> &str {
+            match self {
+                Self::Test => "Test",
+                Self::MaterialPicker => "Materials"
+            }
+        }
     }
 
     struct EditorWindow {
@@ -388,7 +413,9 @@ pub mod implement {
         dragging: bool,
         scaling: bool,
         drag_origin: (i32, i32),
-        scale_origin: (u32, u32)
+        scale_origin: (u32, u32),
+        offset: (f32, f32),
+        scroll_max: f32
     }
 
     impl EditorWindow {
@@ -400,7 +427,9 @@ pub mod implement {
                 scale,
                 window_type,
                 drag_origin: (0, 0),
-                scale_origin: (0, 0)
+                scale_origin: (0, 0),
+                offset: (0.0, 0.0),
+                scroll_max: 10000.0
             }
         }
     }
@@ -433,7 +462,7 @@ pub mod implement {
 
     struct EditorModeUI {
         windows: Vec<EditorWindow>,
-        mouse_action_origin: (f64, f64)
+        mouse_action_origin: (f64, f64),
     }
 
     impl EditorModeUI {
@@ -456,10 +485,26 @@ pub mod implement {
                 ));
             }
 
+            if ui.image_button(&input, 0, 200 + 32, 32, 32, (32, 0), (32, 32), "ui_buttons") {
+                let mut materials_open = None;
+                for (i, window) in self.windows.iter().enumerate() {
+                    if matches!(window.window_type, EditorWindowType::MaterialPicker) {
+                        materials_open = Some(i);
+                    }
+                }
+
+                if let Some(i) = materials_open {
+                    self.windows.remove(i);
+                } else {
+                    self.windows.push(EditorWindow::new(EditorWindowType::MaterialPicker, (100, 100), (400, 400)));
+                }
+            }
+
             let mut interaction_highest_z = f32::MIN;
             let mut begin_drag = None;
             let mut begin_resize = None;
             let mut close = None;
+            let mut scroll = None;
 
             for (i, window) in self.windows.iter_mut().enumerate() {
                 if window.dragging {
@@ -483,13 +528,14 @@ pub mod implement {
                     }
                 }
 
-                if let Some(interaction) = ui.interactable_frame(input, window.position.0, window.position.1, window.scale.0, window.scale.1) {
+                if let Some(interaction) = ui.interactable_frame_titled(input, window.position.0, window.position.1, window.scale.0, window.scale.1, window.window_type.title()) {
                     match interaction {
                         FrameInteraction::Close => {
                             if ui.current_z > interaction_highest_z {
                                 close = Some(i);
                                 begin_drag = None;
                                 begin_resize = None;
+                                scroll = None;
                                 interaction_highest_z = ui.current_z;
                             }
                         },
@@ -499,6 +545,7 @@ pub mod implement {
                                 begin_drag = Some(i);
                                 window.drag_origin = window.position;
                                 begin_resize = None;
+                                scroll = None;
                                 interaction_highest_z = ui.current_z;
                             }
                         },
@@ -508,16 +555,40 @@ pub mod implement {
                                 begin_drag = None;
                                 begin_resize = Some(i);
                                 window.scale_origin = window.scale;
+                                scroll = None;
                                 interaction_highest_z = ui.current_z;
                             }
                         },
-                        _ => todo!()
+                        FrameInteraction::Scroll(offset) => {
+                            if ui.current_z > interaction_highest_z {
+                                close = None;
+                                begin_drag = None;
+                                begin_resize = None;
+                                scroll = Some((i, offset));
+                                // println!("{}", offset);
+                                interaction_highest_z = ui.current_z;
+                            }
+                        }
                     }
                 }
 
+                let ox = window.offset.0 as i32;
+                let oy = window.offset.1 as i32;
                 match window.window_type {
                     EditorWindowType::Test => {
-                        ui.text(10, 20, "Hello Everyone\nI will be talking today\n\"Hahahaha\"\n - Me");
+                        ui.text(ox + 10, oy + 20, "Hello Everyone\nI will be talking today\n\"Hahahaha\"\n - Me");
+                        ui.text(ox + 10, oy + 80, FONT_CHARS);
+
+                        let mut y = oy + 100;
+                        for (name, texture) in textures.textures.iter() {
+                            ui.text(ox + 10, y, name);
+                            y += 15;
+                            ui.image(ox + 10, y, texture.width, texture.height, (0, 0), (texture.width, texture.height), name);
+                            y += texture.height as i32 + 5;
+                        }
+                    },
+                    EditorWindowType::MaterialPicker => {
+
                     }
                 }
 
@@ -536,6 +607,11 @@ pub mod implement {
             if let Some(resize) = begin_resize {
                 self.windows[resize].scaling = true;
                 self.mouse_action_origin = input.mouse_pos;
+            }
+
+            if let Some((i, offset)) = scroll {
+                // println!("{}", offset);
+                self.windows[i].offset.1 = (self.windows[i].offset.1 - offset).min(0.0).max(-self.windows[i].scroll_max)
             }
 
             ui.render(textures, programs, &gl);

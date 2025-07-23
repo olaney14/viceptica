@@ -3,7 +3,7 @@ use std::{thread, time::{Duration, Instant}};
 use cgmath::{vec3, Matrix4, SquareMatrix, Vector3, Zero};
 use glow::{HasContext};
 use glutin::surface::GlSurface;
-use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
+use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
 use crate::{collision::RaycastParameters, common::round_to, mesh::{flags, Mesh}, render::{CameraControlScheme, PointLight}, texture::TextureBank, world::{Model, PlayerMovementMode, Renderable}};
 
@@ -232,6 +232,14 @@ fn main() {
                                 }
                             }
                         }
+                    },
+                    WindowEvent::MouseWheel { delta, .. } => {
+                        input.set_scroll(
+                            match delta {
+                                MouseScrollDelta::LineDelta(x, y) => *y * 40.0,
+                                MouseScrollDelta::PixelDelta(px) => px.y as f32
+                            }
+                        );
                     },
                     WindowEvent::CursorMoved { position, .. } => {
                         input.on_mouse_moved(position.x, position.y);

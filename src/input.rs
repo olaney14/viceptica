@@ -14,7 +14,8 @@ pub struct Input {
     pub keys: HashMap<Key, KeyState>,
     pub mouse_buttons: HashMap<MouseButton, KeyState>,
     pub needs_update: bool,
-    pub mouse_pos: (f64, f64)
+    pub mouse_pos: (f64, f64),
+    pub scroll: f32
 }
 
 impl Input {
@@ -23,7 +24,8 @@ impl Input {
             keys: HashMap::new(),
             mouse_buttons: HashMap::new(),
             needs_update: false,
-            mouse_pos: (0.0, 0.0)
+            mouse_pos: (0.0, 0.0),
+            scroll: 0.0
         }
     }
 
@@ -51,6 +53,11 @@ impl Input {
         self.mouse_buttons.insert(button, KeyState::Released);
     }
 
+    pub fn set_scroll(&mut self, scroll: f32) {
+        self.scroll = scroll;
+        self.needs_update = true;
+    }
+
     /// Call every frame after this struct is done being used, resets `JustPressed` keystates to `Pressed`
     pub fn update(&mut self) {
         if self.needs_update {
@@ -64,6 +71,7 @@ impl Input {
                     *state = KeyState::Pressed;
                 }
             }
+            self.scroll = 0.0;
             self.needs_update = false;
         }
     }
