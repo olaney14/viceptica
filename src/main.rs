@@ -236,7 +236,7 @@ fn main() {
                     WindowEvent::MouseWheel { delta, .. } => {
                         input.set_scroll(
                             match delta {
-                                MouseScrollDelta::LineDelta(x, y) => *y * 40.0,
+                                MouseScrollDelta::LineDelta(x, y) => -*y * 40.0,
                                 MouseScrollDelta::PixelDelta(px) => px.y as f32
                             }
                         );
