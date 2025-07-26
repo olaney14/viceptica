@@ -353,3 +353,70 @@ const SELECTION_CUBE_INDICES: [IndexComponent; 24] = [
     3+4, 2+4,
     2+4, 0+4,
 ];
+
+pub unsafe fn create_skybox(gl: &glow::Context) -> NativeVertexArray {
+    let vertices_u8: &[u8] = core::slice::from_raw_parts(
+        SKYBOX_VERTICES.as_ptr() as *const u8,
+        SKYBOX_VERTICES.len() * core::mem::size_of::<VertexComponent>()
+    );
+
+    let vao = gl.create_vertex_array().unwrap();
+    let vbo = gl.create_buffer().unwrap();
+
+    gl.bind_vertex_array(Some(vao));
+
+    gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::STATIC_DRAW);
+
+    gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 3 * core::mem::size_of::<f32>() as i32, 0);
+    gl.enable_vertex_attrib_array(0);
+
+    gl.bind_vertex_array(None);
+
+    vao
+}
+
+const SKYBOX_VERTICES: [VertexComponent; 108] = [
+    // positions          
+    -1.0,  1.0, -1.0,
+    -1.0, -1.0, -1.0,
+     1.0, -1.0, -1.0,
+     1.0, -1.0, -1.0,
+     1.0,  1.0, -1.0,
+    -1.0,  1.0, -1.0,
+
+    -1.0, -1.0,  1.0,
+    -1.0, -1.0, -1.0,
+    -1.0,  1.0, -1.0,
+    -1.0,  1.0, -1.0,
+    -1.0,  1.0,  1.0,
+    -1.0, -1.0,  1.0,
+
+     1.0, -1.0, -1.0,
+     1.0, -1.0,  1.0,
+     1.0,  1.0,  1.0,
+     1.0,  1.0,  1.0,
+     1.0,  1.0, -1.0,
+     1.0, -1.0, -1.0,
+
+    -1.0, -1.0,  1.0,
+    -1.0,  1.0,  1.0,
+     1.0,  1.0,  1.0,
+     1.0,  1.0,  1.0,
+     1.0, -1.0,  1.0,
+    -1.0, -1.0,  1.0,
+
+    -1.0,  1.0, -1.0,
+     1.0,  1.0, -1.0,
+     1.0,  1.0,  1.0,
+     1.0,  1.0,  1.0,
+    -1.0,  1.0,  1.0,
+    -1.0,  1.0, -1.0,
+
+    -1.0, -1.0, -1.0,
+    -1.0, -1.0,  1.0,
+     1.0, -1.0, -1.0,
+     1.0, -1.0, -1.0,
+    -1.0, -1.0,  1.0,
+     1.0, -1.0,  1.0
+];

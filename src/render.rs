@@ -1,11 +1,11 @@
 use core::f32;
 use std::{collections::HashMap, sync::LazyLock};
 
-use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
-use glow::{HasContext, NativeBuffer};
+use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, SquareMatrix, Vector3};
+use glow::{HasContext, NativeBuffer, NativeVertexArray};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::PhysicalProperties, input::Input, mesh::{flags, Mesh, MeshBank}, shader::{self, ProgramBank}, texture::TextureBank, world::{self, Model, Renderable}};
+use crate::{collision::PhysicalProperties, common, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, ProgramBank}, texture::TextureBank, world::{self, Model, Renderable}};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -80,6 +80,31 @@ pub struct PointLight {
     pub specular: Vector3<f32>
 }
 
+pub enum Skybox {
+    SolidColor(f32, f32, f32),
+    Cubemap(String),
+    NoClear
+}
+
+pub struct Environment {
+    pub skybox: Skybox,
+    pub dir_light: DirLight
+}
+
+impl Environment {
+    pub fn new() -> Self {
+        Self {
+            skybox: Skybox::Cubemap(String::from("field")),
+            dir_light: DirLight {
+                direction: vec3(-0.2, -1.0, -0.3),
+                ambient: vec3(0.1, 0.1, 0.1),
+                diffuse: vec3(0.5, 0.5, 0.5),
+                specular: vec3(1.0, 1.0, 1.0)
+            }
+        }
+    }
+}
+
 pub struct Scene {
     /// Instance data for meshes that are changed infrequently<br>
     /// Data in here is written to individual buffers in `static_instance_buffers` during `prepare_statics` if it is marked as changed
@@ -94,11 +119,13 @@ pub struct Scene {
     pub foreground_meshes: HashMap<String, Vec<MobileRenderData>>,
     pub camera: Camera,
     pub materials: HashMap<String, Material>,
-    pub dir_light: DirLight,
+    pub environment: Environment,
     pub point_lights: Vec<PointLight>,
 
     /// If true, `prepare_statics` will be called on the next frame
-    pub statics_dirty: bool
+    pub statics_dirty: bool,
+
+    pub skybox_vao: Option<NativeVertexArray>
 }
 
 impl Scene {
@@ -107,8 +134,14 @@ impl Scene {
         programs.load_by_name_vf("instanced", gl).unwrap();
         programs.load_by_name_vf("flat", gl).unwrap();
         programs.load_by_name_vf("lines", gl).unwrap();
+        programs.load_by_name_vf("skybox", gl).unwrap();
         self.add_default_materials();
         world::load_brushes(textures, meshes, self, &gl);
+        textures.load_cubemap_by_name("field", gl).unwrap();
+        self.skybox_vao = Some(mesh::create_skybox(gl));
+        //textures.load_cubemap_by_name("heaven", gl).unwrap();
+        //textures.load_cubemap_by_name("cloudy_sky", gl).unwrap();
+
 
         gl.enable(glow::DEPTH_TEST);
         gl.enable(glow::CULL_FACE);
@@ -122,6 +155,21 @@ impl Scene {
     }
 
     pub unsafe fn render(&self, meshes: &MeshBank, programs: &mut ProgramBank, textures: &TextureBank, gl: &glow::Context) {
+        // Clear screen
+        match &self.environment.skybox {
+            Skybox::SolidColor(r, g, b) => {
+                gl.clear_color(*r, *g, *b, 1.0);
+                gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            },
+            Skybox::Cubemap(_) => {
+                gl.clear_color(0.0, 0.0, 0.0, 1.0);
+                gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            },
+            Skybox::NoClear => {
+                gl.clear(glow::DEPTH_BUFFER_BIT);
+            }
+        }
+
         // Render instanced
         let instanced_program = programs.get_mut("instanced").unwrap();
         gl.use_program(Some(instanced_program.inner));
@@ -187,6 +235,26 @@ impl Scene {
             self.render_individual(data, name, meshes, textures, flat_program, gl);
         }
         gl.enable(glow::DEPTH_TEST);
+
+        // Render cubemap skybox
+        if let Skybox::Cubemap(cubemap) = &self.environment.skybox {
+            // https://learnopengl.com/Advanced-OpenGL/Cubemaps
+            gl.depth_func(glow::LEQUAL);
+            let skybox_program = programs.get_mut("skybox").unwrap();
+            let cubemap_texture = textures.get_cubemap(cubemap).unwrap();
+            gl.use_program(Some(skybox_program.inner));
+
+            let modified_view = common::mat4_remove_translation(self.camera.view);
+            skybox_program.uniform_matrix4f32("projection", self.camera.projection, gl);
+            skybox_program.uniform_matrix4f32("view", modified_view, gl);
+
+            gl.bind_vertex_array(self.skybox_vao);
+            gl.bind_texture(glow::TEXTURE_CUBE_MAP, Some(cubemap_texture.inner));
+            gl.draw_arrays(glow::TRIANGLES, 0, 36);
+            
+            gl.depth_func(glow::LESS);
+        }
+
     }
 
     #[inline]
@@ -232,10 +300,10 @@ impl Scene {
             program.uniform_3f32(&format!("pointLights[{}].specular", i), light.specular, gl);
         }
 
-        program.uniform_3f32("dirLight.direction", self.dir_light.direction, gl);
-        program.uniform_3f32("dirLight.ambient", self.dir_light.ambient, gl);
-        program.uniform_3f32("dirLight.diffuse", self.dir_light.diffuse, gl);
-        program.uniform_3f32("dirLight.specular", self.dir_light.specular, gl);
+        program.uniform_3f32("dirLight.direction", self.environment.dir_light.direction, gl);
+        program.uniform_3f32("dirLight.ambient", self.environment.dir_light.ambient, gl);
+        program.uniform_3f32("dirLight.diffuse", self.environment.dir_light.diffuse, gl);
+        program.uniform_3f32("dirLight.specular", self.environment.dir_light.specular, gl);
     }
 
     /// Add a static mesh to the render scene
@@ -431,14 +499,10 @@ impl Scene {
             static_meshes_updated: Vec::new(),
             camera: Camera::new(),
             materials: HashMap::new(),
-            dir_light: DirLight {
-                direction: vec3(-0.2, -1.0, -0.3),
-                ambient: vec3(0.1, 0.1, 0.1),
-                diffuse: vec3(0.5, 0.5, 0.5),
-                specular: vec3(1.0, 1.0, 1.0)
-            },
+            environment: Environment::new(),
             point_lights: Vec::new(),
-            statics_dirty: false
+            statics_dirty: false,
+            skybox_vao: None
         }
     }
 

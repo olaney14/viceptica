@@ -182,8 +182,6 @@ fn main() {
                         world.scene.camera.update(&input, delta_time);
                         world.scene.update(&mut mesh_bank, &gl);
 
-                        gl.clear_color(0.0, 0.0, 0.0, 1.0);
-                        gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
                         world.scene.render(&mesh_bank, &mut program_bank, &texture_bank, &gl);
                         world.post_render(&mut program_bank, &gl);
 
