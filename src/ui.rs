@@ -1,7 +1,7 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use cgmath::vec2;
-use glow::{HasContext, NativeBuffer, NativeVertexArray};
+use glow::{HasContext, NativeVertexArray};
 use winit::event::MouseButton;
 
 use crate::{input::Input, shader::{Program, ProgramBank}, texture::TextureBank};
@@ -9,9 +9,6 @@ use crate::{input::Input, shader::{Program, ProgramBank}, texture::TextureBank};
 const FONT_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .!,- ?  _";
 const FONT_WIDTH: usize = 10;
 // const FONT_HEIGHT: usize = 8;
-
-// const Z_INCREMENT_MINOR: f32 = 0.0001;
-// const Z_INCREMENT_MAJOR: f32 = Z_INCREMENT_MINOR * 100.0;
 
 #[derive(Debug)]
 enum FrameType {
@@ -71,46 +68,6 @@ enum ElementType {
     None
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Rect<T: Clone> {
-    x: T,
-    y: T,
-    w: T,
-    h: T
-}
-
-impl<T: Clone> Rect<T> {
-    pub fn new(x: T, y: T, w: T, h: T) -> Self {
-        Self { x, y, w, h, }
-    }
-}
-
-impl Rect<f32> {
-    pub fn from_clip_rect(clip: (i32, i32, u32, u32)) -> Self {
-        Self::new(clip.0 as f32, clip.1 as f32, clip.2 as f32, clip.3 as f32)
-    }
-    
-    pub fn shifted(mut self, x: f32, y: f32) -> Self {
-        self.x += x;
-        self.y += y;
-        self
-    }
-}
-
-// struct UIElement {
-//     elem: ElementType,
-//     z: f32,
-//     clip: Rect<f32>
-// }
-
-// impl UIElement {
-//     pub fn new(elem: ElementType, z: f32) -> Self {
-//         Self {
-//             elem, z, clip: Rect::new(0.0, 0.0, 1.0, 1.0)
-//         }
-//     }
-// }
-
 type NodePtr = Rc<RefCell<UINode>>;
 
 fn node_ptr(node: UINode) -> NodePtr {
@@ -131,10 +88,6 @@ impl UINode {
         Self { children: Vec::new(), clip: (0, 0, 640 * 2, 480 * 2), draw: ElementType::None, focus: 0, x: 0, y: 0 }
     }
 
-    // pub fn insert(&mut self, node: UINode) {
-    //     self.children.push(Box::new(node));
-    // }
-
     /// Recursively sort all UI nodes
     pub fn sort_all(&mut self) {
         self.children.sort_by(|a, b| a.borrow().focus.cmp(&b.borrow().focus));
@@ -145,38 +98,25 @@ impl UINode {
     }
 }
 
-// struct Container {
-//     pub index: usize,
-//     pub clip_rect: (i32, i32, u32, u32)
-// }
-
 pub struct UI {
-    // elements: Vec<UIElement>,
     tree: NodePtr,
     current_node: NodePtr,
     parent_nodes: Vec<NodePtr>,
     last_modified: NodePtr,
+    /// Dummy vao, the UI doesn't use any vertex data
     pub vao: NativeVertexArray,
-    vbo: NativeBuffer,
-    ebo: NativeBuffer,
-    // container_stack: Vec<Container>,
-    // origin: (i32, i32),
     pub screen_size: (u32, u32),
-    // pub current_z: f32,
     pub mouse_captured: bool,
     pub inc_focus: u32,
     current_global_origin: (i32, i32)
 }
 
 impl UI {
-    pub unsafe fn new(textures: &mut TextureBank, gl: &glow::Context) -> Self {
-        let vbo = gl.create_buffer().unwrap();
-        let ebo = gl.create_buffer().unwrap();
+    pub unsafe fn new(gl: &glow::Context) -> Self {
         let vao = gl.create_vertex_array().unwrap();
-        // textures.load_by_name("ui_atlas", gl).expect("Failed to load ui atlas");
         let tree = Rc::new(RefCell::new(UINode::root()));
         Self {
-            vao, vbo, ebo,
+            vao,
             tree: tree.clone(),
             current_node: tree.clone(),
             parent_nodes: Vec::new(),
@@ -188,10 +128,6 @@ impl UI {
         }
     }
 
-    // fn focus(&mut self, focus: u32) {
-    //     self.focus = focus;
-    // }
-
     pub fn begin(&mut self) {
         self.tree = Rc::new(RefCell::new(UINode::root()));
         self.current_node = self.tree.clone();
@@ -200,14 +136,6 @@ impl UI {
         self.mouse_captured = false;
         self.current_global_origin = (0, 0);
     }
-
-    // fn set_clip_rect(&mut self) {
-    //     self.elements.last_mut().unwrap().clip = if self.container_stack.len() == 0 { 
-    //         Rect::new(0.0, 0.0, self.screen_size.0 as f32, self.screen_size.1 as f32) 
-    //     } else {
-    //         Rect::from_clip_rect(self.container_stack.last().unwrap().clip_rect)
-    //     };
-    // }
 
     fn add_child(&mut self, element: UINode) {
         let element = node_ptr(element);
@@ -229,7 +157,7 @@ impl UI {
         if title.len() == 0 {
             self.add_child_as_current(UINode {
                 children: Vec::new(),
-                clip: (0, 16, w, h - 16),
+                clip: (1, 17, w - 2, h - 18),
                 draw: ElementType::NineCell(NineCell {
                     x: 0, y: 0, w, h, frame_type: frame
                 }),
@@ -238,7 +166,7 @@ impl UI {
         } else {
             self.add_child_as_current(UINode {
                 children: Vec::new(),
-                clip: (0, 16, w, h - 16),
+                clip: (1, 17, w - 2, h - 18),
                 draw: ElementType::TitledNineCell(NineCell {
                     x: 0, y: 0, w, h, frame_type: frame
                 }, title.to_string()),
@@ -246,19 +174,7 @@ impl UI {
             });
         }
 
-        // self.last_modified = Some(self.current_node.clone());
         self.inc_focus += 1;
-        //*self.current_node.as_ref().unwrap().borrow_mut().children.push(Box::new(x));
-        // self.elements.push(UIElement::new(ElementType::NineCell( NineCell {
-        //     x: x + self.origin.0, y: y + self.origin.1, w, h, frame_type: frame
-        // }), self.current_z));
-        // self.set_clip_rect();
-        // self.container_stack.push(Container {
-        //     index: self.elements.len() - 1,
-        //     clip_rect: (x + self.origin.0, y + self.origin.1 + 16, w, h - 16)
-        // });
-        // self.origin = (x + self.origin.0, y + self.origin.1);
-        // self.current_z += Z_INCREMENT_MAJOR;
     }
 
     pub fn frame(&mut self, x: i32, y: i32, w: u32, h: u32) {
@@ -279,23 +195,11 @@ impl UI {
     pub fn mouse_in_clip_rect(&self, mpx: i32, mpy: i32) -> bool {
         let clip = self.global_clip_rect();
         mpx > clip.0 && mpx < clip.0 + clip.2 as i32 && mpy > clip.1 && mpy < clip.1 + clip.3 as i32
-        // if let Some(container) = self.container_stack.last() {
-        //     return mpx > container.clip_rect.0 && mpx < container.clip_rect.0 + container.clip_rect.2 as i32
-        //         && mpy > container.clip_rect.1 && mpy < container.clip_rect.1 + container.clip_rect.3 as i32
-        // }
-
-        // true
     }
 
     pub fn mouse_in_frame(&self, mpx: i32, mpy: i32) -> bool {
         let clip = self.global_clip_rect();
         mpx > clip.0 && mpx < clip.0 + clip.2 as i32 && mpy > clip.1 - 16 && mpy < clip.1 + clip.3 as i32 + 16
-        // if let Some(container) = self.container_stack.last() {
-        //     return mpx > container.clip_rect.0 && mpx < container.clip_rect.0 + container.clip_rect.2 as i32
-        //         && mpy > container.clip_rect.1 - 16 && mpy < container.clip_rect.1 + container.clip_rect.3 as i32 + 16
-        // }
-
-        // false
     }
 
     pub fn interactable_frame(&mut self, input: &Input, title: &str, x: i32, y: i32, w: u32, h: u32) -> Option<FrameInteraction> {
@@ -335,15 +239,6 @@ impl UI {
         None
     }
 
-    // pub fn interactable_frame_titled(&mut self, input: &Input, x: i32, y: i32, w: u32, h: u32, title: &str) -> Option<FrameInteraction> {
-    //     // self.current_z += Z_INCREMENT_MAJOR;
-    //     // self.text(x + 4, y + 2, title);
-    //     // self.set_focus(self.inc_focus);
-    //     // self.inc_focus -= 1;
-    //     // self.current_z -= Z_INCREMENT_MAJOR;
-    //     self.interactable_frame(input, x, y, w, h)
-    // }
-
     pub fn text(&mut self, x: i32, y: i32, message: &str) {
         self.add_child(UINode {
             children: Vec::new(),
@@ -354,11 +249,6 @@ impl UI {
             focus: self.inc_focus, x, y
         });
         self.inc_focus += 1;
-        // self.elements.push(UIElement::new(ElementType::TextLabel(TextLabel {
-        //     x: x + self.origin.0, y: y + self.origin.1, message: message.to_string()
-        // }), self.current_z));
-        // self.set_clip_rect();
-        // self.current_z += Z_INCREMENT_MINOR;
     }
 
     pub fn image(&mut self, x: i32, y: i32, w: u32, h: u32, tx: (u32, u32), tx_size: (u32, u32), texture: &str) {
@@ -371,20 +261,16 @@ impl UI {
             focus: self.inc_focus, x, y
         });
         self.inc_focus += 1;
-        // self.elements.push(UIElement::new(ElementType::TextureLabel(TextureLabel {
-        //     x: x + self.origin.0, y: y + self.origin.1, w, h,
-        //     tx: tx.0, ty: tx.1,
-        //     th: tx_size.1, tw: tx_size.0, texture: texture.to_string()
-        // }), self.current_z));
-        // self.set_clip_rect();
-        // self.current_z += Z_INCREMENT_MINOR;
     }
 
     pub fn image_button(&mut self, input: &Input, x: i32, y: i32, w: u32, h: u32, tx: (u32, u32), tx_size: (u32, u32), texture: &str) -> bool {
         self.image(x, y, w, h, tx, tx_size, texture);
         let mpx = input.mouse_pos.0 as i32;
         let mpy = input.mouse_pos.1 as i32;
-        if self.mouse_in_clip_rect(mpx, mpy) && mpx > x && mpx < x + w as i32 && mpy > y && mpy < y + h as i32 {
+        let gx = x + self.current_global_origin.0;
+        let gy = y + self.current_global_origin.1;
+        if self.mouse_in_clip_rect(mpx, mpy) && mpx > gx && mpx < gx + w as i32 && mpy > gy && mpy < gy + h as i32 {
+            // println!("in");
             self.mouse_captured = true;
             if input.get_mouse_button_just_pressed(MouseButton::Left) {
                 return true;
@@ -399,17 +285,6 @@ impl UI {
         self.current_global_origin.0 -= self.current_node.borrow().x;
         self.current_global_origin.1 -= self.current_node.borrow().y;
         self.current_node = self.parent_nodes.pop().unwrap();
-        // self.current_z -= Z_INCREMENT_MAJOR;
-        // self.container_stack.pop();
-        // if self.container_stack.len() == 0 {
-        //     self.origin = (0, 0);
-        // } else {
-        //     self.origin = match &self.elements.get(self.container_stack.last().unwrap().index).unwrap().elem {
-        //         ElementType::NineCell(nine_cell) => (nine_cell.x, nine_cell.y),
-        //         ElementType::TextLabel(label) => (label.x, label.y),
-        //         ElementType::TextureLabel(label) => (label.x, label.y)
-        //     };
-        // }
     }
 
     unsafe fn render_texture_label(label: &TextureLabel, local_offset: (i32, i32), textures: &TextureBank, ui_program: &mut Program, gl: &glow::Context) {
@@ -487,6 +362,29 @@ impl UI {
         }   
     }
 
+    /// Returns `None` if the rect would be empty
+    fn intersect(a: (i32, i32, u32, u32), b: (i32, i32, u32, u32)) -> Option<(i32, i32, u32, u32)> {
+        let ax2 = a.0 + a.2 as i32;
+        let ay2 = a.1 + a.3 as i32;
+        let bx2 = b.0 + b.2 as i32;
+        let by2 = b.1 + b.3 as i32;
+
+        let x1 = a.0.max(b.0);
+        let y1 = a.1.max(b.1);
+        let x2 = ax2.min(bx2);
+        let y2 = ay2.min(by2);
+
+        if x2 > x1 && y2 > y1 {
+            Some((
+                x1, y1,
+                (x2 - x1) as u32,
+                (y2 - y1) as u32
+            ))
+        } else {
+            None
+        }
+    }
+
     unsafe fn render_node(&self, node: &NodePtr, local_offset: (i32, i32), clip: (i32, i32, u32, u32), textures: &TextureBank, ui_program: &mut Program, gl: &glow::Context) {
         let element = node.borrow();
         gl.scissor(clip.0, self.screen_size.1 as i32 - clip.1 - clip.3 as i32, clip.2 as i32, clip.3 as i32);
@@ -514,18 +412,19 @@ impl UI {
     unsafe fn traverse_render(&self, node: &NodePtr, clip: (i32, i32, u32, u32), mut local_offset: (i32, i32), textures: &TextureBank, ui_program: &mut Program, gl: &glow::Context) {
         local_offset.0 += node.borrow().x;
         local_offset.1 += node.borrow().y;
-        // println!("Rendering: {:?}, clip: {:?}", node.borrow().draw, clip);
         self.render_node(&node, local_offset, clip, textures, ui_program, gl);
         for child_node in node.borrow().children.iter() {
             let mut new_clip = node.borrow().clip.clone();
             new_clip.0 += local_offset.0;
             new_clip.1 += local_offset.1;
-            self.traverse_render(child_node, new_clip, local_offset, textures, ui_program, gl);
+            let intersect = Self::intersect(clip, new_clip);
+            if let Some(intersect) = intersect {
+                self.traverse_render(child_node, intersect, local_offset, textures, ui_program, gl);
+            }
         }
     }
 
     pub unsafe fn render(&self, textures: &TextureBank, programs: &mut ProgramBank, gl: &glow::Context) {
-        // println!("============ Begin Render =============");
         gl.disable(glow::CULL_FACE);
         gl.disable(glow::DEPTH_TEST);
         gl.enable(glow::SCISSOR_TEST);
@@ -537,97 +436,15 @@ impl UI {
         ui_program.uniform_1i32("tex", 0, gl);
         // core profile requires a vao bound when drawing arrays even though ui shader is attributeless
         gl.bind_vertex_array(Some(self.vao));
-
         gl.active_texture(glow::TEXTURE0);
-        // let frame_texture = textures.get("ui_frame").unwrap();
-        // let font_texture = textures.get("font").unwrap();
 
         self.tree.borrow_mut().sort_all();
 
         self.traverse_render(&self.tree, (0, 0, self.screen_size.0, self.screen_size.1), (0, 0), textures, ui_program, gl);
 
-        // for element in self.elements.iter() {
-        //     ui_program.uniform_1f32("z", element.z, gl);
-        //     gl.scissor(element.clip.x as i32, self.screen_size.1 as i32 - element.clip.y as i32 - element.clip.h as i32, element.clip.w as i32, element.clip.h as i32);
-        //     match &element.elem {
-        //         ElementType::TextureLabel(label) => {
-        //             let texture = textures.get(&label.texture).unwrap();
-        //             gl.bind_texture(glow::TEXTURE_2D, Some(texture.inner));
-        //             ui_program.uniform_2f32("texSize", vec2(texture.width as f32, texture.height as f32), gl);
-
-        //             ui_program.uniform_2f32("pos", vec2(label.x as f32, label.y as f32), gl);
-        //             ui_program.uniform_2f32("scale", vec2(label.w as f32, label.h as f32), gl);
-        //             ui_program.uniform_2f32("texturePos", vec2(label.tx as f32, label.ty as f32), gl);
-        //             ui_program.uniform_2f32("textureScale", vec2(label.tw as f32, label.th as f32), gl);
-        //             gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
-        //         },
-        //         ElementType::NineCell(nine_cell) => {
-        //             gl.bind_texture(glow::TEXTURE_2D, Some(frame_texture.inner));
-        //             ui_program.uniform_2f32("texSize", vec2(frame_texture.width as f32, frame_texture.height as f32), gl);
-        //             ui_program.uniform_2f32("textureScale", vec2(16.0, 16.0), gl);
-                    
-        //             let width = nine_cell.w.max(33) as f32 - 32.0;
-        //             let height = nine_cell.h.max(33) as f32 - 32.0;
-
-        //             // Hire me
-        //             let tx_origin = nine_cell.frame_type.get_texture_origin();
-        //             let mut ty = tx_origin.1 as f32;
-        //             for (y, h) in [(nine_cell.y as f32, 16.0), (nine_cell.y as f32 + 16.0, height), (nine_cell.y as f32 + 16.0 + height, 16.0)] {
-        //                 let mut tx = tx_origin.0 as f32;
-        //                 for (x, w) in [(nine_cell.x as f32, 16.0), (nine_cell.x as f32 + 16.0, width), (nine_cell.x as f32 + 16.0 + width, 16.0)] {
-        //                     ui_program.uniform_2f32("pos", vec2(x, y), gl);
-        //                     ui_program.uniform_2f32("scale", vec2(w, h), gl);
-        //                     ui_program.uniform_2f32("texturePos", vec2(tx, ty), gl);
-
-        //                     gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
-
-        //                     tx += 16.0;
-        //                 }
-        //                 ty += 16.0;
-        //             }
-        //         },
-        //         ElementType::TextLabel(text) => {
-        //             gl.bind_texture(glow::TEXTURE_2D, Some(font_texture.inner));
-        //             ui_program.uniform_2f32("texSize", vec2(font_texture.width as f32, font_texture.height as f32), gl);
-        //             ui_program.uniform_2f32("scale", vec2(6.0, 10.0), gl);
-        //             ui_program.uniform_2f32("textureScale", vec2(6.0, 10.0), gl);
-
-        //             let mut x = text.x;
-        //             let mut y = text.y;
-
-        //             for char in text.message.chars() {
-        //                 if char == '\n' {
-        //                     x = text.x;
-        //                     y += 10;
-        //                     continue;
-        //                 } else if char == ' ' {
-        //                     x += 6;
-        //                     continue;
-        //                 }
-
-        //                 let char_pos = if let Some(index) = FONT_CHARS.find(char) {
-        //                     (index % FONT_WIDTH, index / FONT_WIDTH)
-        //                 } else {
-        //                     (7, 6)
-        //                 };
-
-        //                 ui_program.uniform_2f32("pos", vec2(x as f32, y as f32), gl);
-        //                 ui_program.uniform_2f32("texturePos", vec2(char_pos.0 as f32 * 6.0, char_pos.1 as f32 * 10.0), gl);
-        //                 gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
-
-        //                 x += 6;
-        //             }   
-        //         }
-        //         _ => ()
-        //     }
-        // }
-
         gl.enable(glow::CULL_FACE);
         gl.enable(glow::DEPTH_TEST);
         gl.disable(glow::SCISSOR_TEST);
-
-        //println!("================= End Render ================");
-        //panic!();
     }
 }
 
@@ -637,7 +454,9 @@ pub mod implement {
     use cgmath::vec3;
     use winit::event::MouseButton;
 
-    use crate::{common::round_to, input::{self, Input}, mesh::flags, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, FONT_CHARS, UI}, world::{Renderable, World}};
+    use crate::{common::round_to, input::Input, mesh::flags, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, FONT_CHARS, UI}, world::{Renderable, World, APPLICABLE_MATERIALS}};
+
+    const MATERIAL_FRAME_SIZE: u32 = 100;
 
     pub struct VicepticaUI {
         pub inner: UI,
@@ -693,9 +512,9 @@ pub mod implement {
     }
 
     impl VicepticaUI {
-        pub fn new(textures: &mut TextureBank, gl: &glow::Context) -> Self {
+        pub fn new(gl: &glow::Context) -> Self {
             Self {
-                inner: unsafe { UI::new(textures, gl) },
+                inner: unsafe { UI::new(gl) },
                 editor: EditorModeUI::new(),
                 play: PlayModeUI::new(),
                 play_mode: true
@@ -772,19 +591,6 @@ pub mod implement {
             }
 
             if ui.image_button(&input, 0, 200 + 32, 32, 32, (32, 0), (32, 32), "ui_buttons") {
-                // let mut materials_open = None;
-                // for (i, window) in self.windows.iter().enumerate() {
-                //     if matches!(window.window_type, EditorWindowType::MaterialPicker) {
-                //         materials_open = Some(i);
-                //     }
-                // }
-
-                // if let Some(i) = materials_open {
-                //     self.windows.remove(i);
-                // } else {
-                //     self.add_window(EditorWindow::new(EditorWindowType::MaterialPicker, (100, 100), (400, 400)));
-                //     // self.windows.push(EditorWindow::new(EditorWindowType::MaterialPicker, (100, 100), (400, 400)));
-                // }
                 self.toggle_window(EditorWindowType::MaterialPicker);
             }
             if ui.image_button(&input, 0, 200 + 64, 32, 32, (64, 0), (32, 32), "ui_buttons") {
@@ -868,7 +674,25 @@ pub mod implement {
                         }
                     },
                     EditorWindowType::MaterialPicker => {
+                        let rows = (window.scale.0 / MATERIAL_FRAME_SIZE).max(1);
+                        let mut x = 0;
+                        let mut y = 16;
 
+                        for (i, material) in APPLICABLE_MATERIALS.iter().enumerate() {
+                            let texture = textures.textures.get(*material).unwrap();
+                            ui.frame(x, y, MATERIAL_FRAME_SIZE, MATERIAL_FRAME_SIZE);
+                            let draw_pos = MATERIAL_FRAME_SIZE / 2 - 32;
+                            if ui.image_button(input, draw_pos as i32, draw_pos as i32, 64, 64, (0, 0), (texture.width, texture.height), *material) {
+                                world.editor_data.apply_material = Some(material.to_string());
+                            }
+                            ui.pop();
+                            if (i + 1) % rows as usize == 0 {
+                                x = 0;
+                                y += MATERIAL_FRAME_SIZE as i32;
+                            } else {
+                                x += MATERIAL_FRAME_SIZE as i32;
+                            }
+                        }
                     }
                 }
 

@@ -28,7 +28,7 @@ fn main() {
     let mut input = input::Input::new();
     let mut world = world::World::new();
     // let mut ui = unsafe { ui::UI::new(&mut texture_bank, &gl) };
-    let mut ui = ui::implement::VicepticaUI::new(&mut texture_bank, &gl);
+    let mut ui = ui::implement::VicepticaUI::new(&gl);
 
     unsafe {
         gl.enable(glow::DEBUG_OUTPUT);
@@ -151,6 +151,10 @@ fn main() {
 
                         if input.get_key_pressed(Key::Named(NamedKey::Control)) && input.get_key_just_pressed(Key::Character("m".into())) {
                             println!("{}", mesh_bank.log_loaded_models());
+                        }
+
+                        if input.get_key_pressed(Key::Named(NamedKey::Control)) && input.get_key_just_pressed(Key::Character("b".into())) {
+                            world.debug_brushes();
                         }
 
                         if let CameraControlScheme::FirstPerson(locked) = &mut world.scene.camera.control_sceme {

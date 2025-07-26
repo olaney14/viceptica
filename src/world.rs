@@ -17,6 +17,19 @@ pub const BRUSH_TEXTURES: [&str; 8] = [
     "container"
 ];
 
+pub const APPLICABLE_MATERIALS: [&str; 10] = [
+    "concrete",
+    "end_sky",
+    "evilwatering",
+    "pillows_old_floor",
+    "sky",
+    "sparkle",
+    "watering",
+    "container",
+    "ice",
+    "tar"
+];
+
 pub const DEFAULT_INCREMENT: f32 = 0.25;
 
 const ARROW_LOWEST_Y: f32 = -1.435;
@@ -68,6 +81,7 @@ pub struct EditorModeData {
     pub selection_box_scale: Vector3<f32>,
     pub selection_box_vao: Option<NativeVertexArray>,
     pub selection_box_visible: bool,
+    pub apply_material: Option<String>
 }
 
 impl EditorModeData {
@@ -174,7 +188,8 @@ impl World {
                 selection_box_vao: None,
                 drag_plane: None,
                 drag_object_scale: None,
-                drag_object_sign: None
+                drag_object_sign: None,
+                apply_material: None
             }
         };
 
@@ -448,6 +463,27 @@ impl World {
         }
     }
 
+    /// Returns the new brush index
+    pub fn set_brush_material(&mut self, brush_index: usize, new_material: String) -> usize {
+        if matches!(self.models[self.internal.brushes].as_ref().unwrap().render.get(brush_index).unwrap(), Renderable::Brush(..)) {
+            let mut new_brush = self.models[self.internal.brushes].as_ref().unwrap().render.get(brush_index).unwrap().clone();
+            // self.scene.remove_renderable(self.models[self.internal.brushes].as_mut().unwrap(), brush_index);
+            if let Renderable::Brush(material, ..) = &mut new_brush {
+                *material = new_material;
+            }
+            
+            //self.scene.amend_model(self.models[self.internal.brushes].as_mut().unwrap(), new_brush);
+            self.remove_brush(brush_index);
+            return self.insert_brush(new_brush);
+        } else {
+            panic!("Non-brush in internal brush model");
+        }
+    }
+
+    pub fn debug_brushes(&self) {
+        println!("{:?}", self.models[self.internal.brushes].as_ref().unwrap().render);
+    }
+
     pub fn insert_brush(&mut self, brush: Renderable) -> usize {
         match brush {
             Renderable::Brush(ref material, position, size, _) => {
@@ -460,6 +496,7 @@ impl World {
                 collider.model = Some(self.internal.brushes);
                 model.colliders.push(Some(self.physical_scene.add_collider(collider)));
                 self.scene.amend_model(model, brush);
+                // println!("{:?}", model.render);
                 return model.render.len() - 1;
             },
             _ => panic!("thats not a brush")
@@ -756,21 +793,52 @@ impl World {
         self.insert_model(new_model)
     }
 
+    pub fn remove_brush(&mut self, brush_index: usize) {
+        let brushes = self.models.get_mut(self.internal.brushes).unwrap().as_mut().unwrap();
+        self.scene.remove_renderable(brushes, brush_index);
+        if let Some(collider) = brushes.colliders[brush_index] {
+            self.physical_scene.remove_collider(collider).unwrap();
+        }
+        
+        brushes.colliders.remove(brush_index);
+
+        // This is only local to the brushes model
+        for collider in brushes.colliders.iter() {
+            if let Some(collider) = collider {
+                if let Some(collider) = self.physical_scene.colliders.get_mut(*collider).unwrap() {
+                    if let Some(ref mut renderable) = collider.renderable {
+                        if *renderable > brush_index {
+                            *renderable -= 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn update(&mut self, input: &Input, mouse_ray: (Vector3<f32>, Vector3<f32>), delta_time: f32) {
         self.player.update(&self.scene.camera, input);
 
         let mut selection = self.editor_data.selected_object.take();
+        let mut selection_changed = false;
+
         if let Some(selected) = &selection {
             match selected {
                 Selection::Brush(brush) => {
-                    match self.editor_data.selection_type {
-                        SelectionType::Movement => {
-                            self.adorn_arrows_brush(*brush);
-                        },
-                        SelectionType::Scaling => {
-                            self.adorn_boxes_brush(*brush);
-                        },
-                        _ => ()
+                    if let Some(material) = self.editor_data.apply_material.take() {
+                        let new_index = self.set_brush_material(*brush, material);
+                        self.select_brush(new_index);
+                        selection_changed = true;
+                    } else {
+                        match self.editor_data.selection_type {
+                            SelectionType::Movement => {
+                                self.adorn_arrows_brush(*brush);
+                            },
+                            SelectionType::Scaling => {
+                                self.adorn_boxes_brush(*brush);
+                            },
+                            _ => ()
+                        }
                     }
                 },
                 Selection::Model(model) => {
@@ -788,27 +856,7 @@ impl World {
             if input.get_key_just_pressed(Key::Named(NamedKey::Delete)) || input.get_key_just_pressed(Key::Named(NamedKey::Backspace)) {
                 match selected {
                     Selection::Brush(brush) => {
-                        let brushes = self.models.get_mut(self.internal.brushes).unwrap().as_mut().unwrap();
-                        self.scene.remove_renderable(brushes, *brush);
-                        if let Some(collider) = brushes.colliders[*brush] {
-                            self.physical_scene.remove_collider(collider).unwrap();
-                        }
-                        
-                        brushes.colliders.remove(*brush);
-
-                        // This is only local to the brushes model
-                        for collider in brushes.colliders.iter() {
-                            if let Some(collider) = collider {
-                                if let Some(collider) = self.physical_scene.colliders.get_mut(*collider).unwrap() {
-                                    if let Some(ref mut renderable) = collider.renderable {
-                                        if *renderable > *brush {
-                                            *renderable -= 1;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
+                        self.remove_brush(*brush);
                         self.deselect();
                         selection = None;
                     },
@@ -821,7 +869,10 @@ impl World {
                 }
             }
         }
-        self.editor_data.selected_object = selection;
+        if !selection_changed {
+            self.editor_data.selected_object = selection;
+        }
+        self.editor_data.apply_material = None;
 
         // Duplicate
         if input.get_key_pressed(Key::Named(NamedKey::Control)) && input.get_key_just_pressed(Key::Character("d".into())) {
@@ -923,7 +974,7 @@ impl World {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Renderable {
     Mesh(String, Matrix4<f32>, u32),
     Brush(String, Vector3<f32>, Vector3<f32>, u32)
