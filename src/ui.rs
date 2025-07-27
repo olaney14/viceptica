@@ -4,7 +4,7 @@ use cgmath::vec2;
 use glow::{HasContext, NativeVertexArray};
 use winit::event::MouseButton;
 
-use crate::{input::Input, shader::{Program, ProgramBank}, texture::TextureBank};
+use crate::{input::Input, shader::{Program, ProgramBank}, texture::TextureBank, ui};
 
 const FONT_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .!,- ?  _";
 const FONT_WIDTH: usize = 10;
@@ -22,6 +22,11 @@ pub enum FrameInteraction {
     ResizeBegin,
     Scroll(f32),
     OtherContentsClicked
+}
+
+pub struct SliderInteraction {
+    pub clicked: bool,
+    pub progress: u32
 }
 
 impl FrameType {
@@ -60,11 +65,19 @@ struct TextureLabel {
 }
 
 #[derive(Debug)]
+struct Slider {
+    x: i32, y: i32,
+    size: u32, slider_pos: u32,
+    vertical: bool
+}
+
+#[derive(Debug)]
 enum ElementType {
     NineCell(NineCell),
     TextLabel(TextLabel),
     TextureLabel(TextureLabel),
     TitledNineCell(NineCell, String),
+    Slider(Slider),
     None
 }
 
@@ -280,6 +293,56 @@ impl UI {
         false
     }
 
+    fn _slider(&mut self, input: &Input, x: i32, y: i32, size: u32, progress: u32, vertical: bool) -> SliderInteraction {
+        self.add_child(UINode {
+            children: Vec::new(),
+            clip: (0, 0, if vertical { 32 } else { size }, if vertical { size } else { 32 }),
+            draw: ElementType::Slider(Slider {
+                x: 0, y: 0, size, slider_pos: progress, vertical
+            }),
+            focus: self.inc_focus, x, y
+        });
+        self.inc_focus += 1;
+
+        let mpx = input.mouse_pos.0 as i32;
+        let mpy = input.mouse_pos.1 as i32;
+        let mut gx = x + self.current_global_origin.0;
+        let mut gy = y + self.current_global_origin.1;
+
+        let progress = if vertical { (mpy - gy).max(0).min(size as i32) as u32 } else { (mpx - gx).max(0).min(size as i32) as u32 };
+
+        let w = if vertical { 40 } else { size };
+        let h = if vertical { size } else { 40 };
+
+        if vertical {
+            gx -= 20;
+        } else {
+            gy -= 20;
+        }
+
+        if self.mouse_in_clip_rect(mpx, mpy) && mpx > gx && mpx < gx + w as i32 && mpy > gy && mpy < gy + h as i32 {
+            if input.get_mouse_button_just_pressed(MouseButton::Left) {
+                return SliderInteraction {
+                    clicked: true,
+                    progress
+                };
+            }
+        }
+
+        SliderInteraction {
+            clicked: false, 
+            progress
+        }
+    }
+
+    pub fn slider(&mut self, input: &Input, x: i32, y: i32, size: u32, progress: u32) -> SliderInteraction {
+        self._slider(input, x, y, size, progress, false)
+    }
+
+    pub fn vertical_slider(&mut self, input: &Input, x: i32, y: i32, size: u32, progress: u32) -> SliderInteraction {
+        self._slider(input, x, y, size, progress, true)
+    }
+
     pub fn pop(&mut self) {
         assert!(!self.parent_nodes.is_empty(), "pop() was called on the root node");
         self.current_global_origin.0 -= self.current_node.borrow().x;
@@ -362,6 +425,39 @@ impl UI {
         }   
     }
 
+    unsafe fn render_slider(slider: &Slider, local_offset: (i32, i32), textures: &TextureBank, ui_program: &mut Program, gl: &glow::Context) {
+        let x = slider.x + local_offset.0;
+        let y = slider.y + local_offset.1;
+
+        let slider_texture = textures.get("slider").unwrap();
+        gl.bind_texture(glow::TEXTURE_2D, Some(slider_texture.inner));
+        ui_program.uniform_2f32("texSize", vec2(slider_texture.width as f32, slider_texture.height as f32), gl);
+
+        ui_program.uniform_2f32("pos", vec2(x as f32, y as f32), gl);
+        ui_program.uniform_2f32("textureScale", vec2(16.0, 16.0), gl);
+        ui_program.uniform_2f32("texturePos", vec2(0.0, 0.0), gl);
+        if slider.vertical {
+            ui_program.uniform_2f32("scale", vec2(8.0, slider.size as f32), gl);
+        } else {
+            ui_program.uniform_2f32("scale", vec2(slider.size as f32, 8.0), gl);
+        }
+        gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+
+        if slider.vertical {
+            ui_program.uniform_2f32("pos", vec2(x as f32 - 16.0, y as f32 + slider.slider_pos as f32 - 6.0), gl);
+            ui_program.uniform_2f32("textureScale", vec2(48.0, 15.5), gl);
+            ui_program.uniform_2f32("texturePos", vec2(16.0, 0.0), gl);
+            ui_program.uniform_2f32("scale", vec2(48.0, 15.5), gl);
+            gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+        } else {
+            ui_program.uniform_2f32("pos", vec2(x as f32 + slider.slider_pos as f32 - 6.0, (y - 16) as f32), gl);
+            ui_program.uniform_2f32("textureScale", vec2(16.0, 47.5), gl);
+            ui_program.uniform_2f32("texturePos", vec2(0.0, 16.0), gl);
+            ui_program.uniform_2f32("scale", vec2(16.0, 47.5), gl);
+            gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+        } 
+    }
+
     /// Returns `None` if the rect would be empty
     fn intersect(a: (i32, i32, u32, u32), b: (i32, i32, u32, u32)) -> Option<(i32, i32, u32, u32)> {
         let ax2 = a.0 + a.2 as i32;
@@ -404,6 +500,9 @@ impl UI {
                     x: nine_cell.x + 4, y: nine_cell.y + 2,
                     message: title.to_owned()
                 }, local_offset, textures, ui_program, gl);
+            },
+            ElementType::Slider(slider) => {
+                Self::render_slider(slider, local_offset, textures, ui_program, gl);
             }
             ElementType::None => ()
         }
@@ -454,7 +553,7 @@ pub mod implement {
     use cgmath::vec3;
     use winit::event::MouseButton;
 
-    use crate::{common::round_to, input::Input, mesh::flags, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, FONT_CHARS, UI}, world::{Renderable, World, APPLICABLE_MATERIALS}};
+    use crate::{common::round_to, input::Input, mesh::flags, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Renderable, World, APPLICABLE_MATERIALS}};
 
     const MATERIAL_FRAME_SIZE: u32 = 100;
 
@@ -469,14 +568,16 @@ pub mod implement {
     #[derive(PartialEq)]
     enum EditorWindowType {
         Test,
-        MaterialPicker
+        MaterialPicker,
+        LightEditor
     }
 
     impl EditorWindowType {
         fn title(&self) -> &str {
             match self {
                 Self::Test => "Test",
-                Self::MaterialPicker => "Materials"
+                Self::MaterialPicker => "Materials",
+                Self::LightEditor => "Light Properties"
             }
         }
     }
@@ -491,7 +592,8 @@ pub mod implement {
         scale_origin: (u32, u32),
         offset: (f32, f32),
         scroll_max: f32,
-        focus: u32
+        focus: u32,
+        sliders: SliderManager
     }
 
     impl EditorWindow {
@@ -506,8 +608,21 @@ pub mod implement {
                 scale_origin: (0, 0),
                 offset: (0.0, 0.0),
                 scroll_max: 10000.0,
-                focus: 0
+                focus: 0,
+                sliders: SliderManager::new()
             }
+        }
+
+        fn slider(&mut self, input: &Input, x: i32, y: i32, size: u32, ui: &mut UI) -> u32 {
+            let progress = *self.sliders.slider_levels.get(self.sliders.current_slider).unwrap_or(&0);
+            self.sliders.add_slider(ui.slider(input, x, y, size, progress));
+            progress
+        }
+
+        fn vertical_slider(&mut self, input: &Input, x: i32, y: i32, size: u32, ui: &mut UI) -> u32 {
+            let progress = *self.sliders.slider_levels.get(self.sliders.current_slider).unwrap_or(&0);
+            self.sliders.add_slider(ui.vertical_slider(input, x, y, size, progress));
+            size - progress
         }
     }
 
@@ -522,10 +637,11 @@ pub mod implement {
         }
 
         pub unsafe fn init(&mut self, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context) {
-            programs.load_by_name_vf("ui", &gl).unwrap();
-            textures.load_by_name("ui_buttons", &gl).unwrap();
-            textures.load_by_name("ui_frame", &gl).unwrap();
-            textures.load_by_name("font", &gl).unwrap();
+            programs.load_by_name_vf("ui", gl).unwrap();
+            textures.load_by_name("ui_buttons", gl).unwrap();
+            textures.load_by_name("ui_frame", gl).unwrap();
+            textures.load_by_name("font", gl).unwrap();
+            textures.load_by_name("slider", gl).unwrap();
         }
 
         pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, world: &mut World) {
@@ -547,7 +663,7 @@ pub mod implement {
         pub fn new() -> Self {
             Self {
                 mouse_action_origin: (0.0, 0.0),
-                windows: Vec::new(),
+                windows: vec![EditorWindow::new(EditorWindowType::LightEditor, (100, 100), (400, 400))],
                 highest_focus: 0
             }
         }
@@ -626,6 +742,8 @@ pub mod implement {
                     }
                 }
 
+                window.sliders.reset();
+
                 if let Some(interaction) = ui.interactable_frame(input, window.window_type.title(), window.position.0, window.position.1, window.scale.0, window.scale.1) {
                     if window.focus >= interaction_highest_focus {
                         close = None;
@@ -693,8 +811,15 @@ pub mod implement {
                                 x += MATERIAL_FRAME_SIZE as i32;
                             }
                         }
+                    },
+                    EditorWindowType::LightEditor => {
+                        // let progress = window.slider(input, 100, 100, 100, ui);
+
+                        println!("{}", window.vertical_slider(input, 10, 50, 200, ui));
+                        // println!("{}", progress);
                     }
                 }
+                window.sliders.end_of_loop(input);
 
                 ui.pop();
             }
@@ -724,6 +849,54 @@ pub mod implement {
             }
 
             ui.render(textures, programs, &gl);
+        }
+    }
+
+    struct SliderManager {
+        slider_levels: Vec<u32>,
+        active_slider: Option<usize>,
+        sliders: Vec<SliderInteraction>,
+        current_slider: usize
+    }
+
+    impl SliderManager {
+        fn reset(&mut self) {
+            // self.sliders.clear();
+            self.current_slider = 0;
+        }
+
+        fn add_slider(&mut self, interaction: SliderInteraction) {
+            if interaction.clicked {
+                self.active_slider = Some(self.current_slider);
+            }
+
+            if self.current_slider >= self.sliders.len() {
+                self.sliders.push(interaction);
+                self.slider_levels.push(0);
+            } else {
+                self.sliders[self.current_slider] = interaction;
+            }
+            
+            self.current_slider += 1;
+        }
+
+        fn end_of_loop(&mut self, input: &Input) {
+            if input.get_mouse_button_released(MouseButton::Left) {
+                self.active_slider = None;
+            }
+
+            if let Some(slider) = self.active_slider {
+                self.slider_levels[slider] = self.sliders[slider].progress;
+            }
+        }
+
+        fn new() -> Self {
+            Self {
+                active_slider: None,
+                current_slider: 0,
+                slider_levels: Vec::new(),
+                sliders: Vec::new()
+            }
         }
     }
 
