@@ -550,12 +550,17 @@ impl UI {
 pub mod implement {
     use core::f32;
 
-    use cgmath::vec3;
+    use cgmath::{vec3, Matrix4, Vector3, Zero};
     use winit::event::MouseButton;
 
-    use crate::{common::round_to, input::Input, mesh::flags, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Renderable, World, APPLICABLE_MATERIALS}};
+    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
 
     const MATERIAL_FRAME_SIZE: u32 = 100;
+
+    const USER_AMBIENT_STRENGTH: f32 = 0.3;
+    const USER_SPECULAR_STRENGTH: f32 = 0.7;
+    const USER_SPECULAR_BLEND: f32 = 0.75;
+    const USER_RADIUS_FACTOR: f32 = 1.0 / 5.0;
 
     pub struct VicepticaUI {
         pub inner: UI,
@@ -645,10 +650,42 @@ pub mod implement {
         }
 
         pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, world: &mut World) {
+            if let Some(light) = world.editor_data.open_light_ui.take() {
+                self.on_light_selected(light, &world);
+            }
+
             if self.play_mode {
                 // todo
             } else {
                 self.editor.render_and_update(input, textures, programs, gl, &mut self.inner, world);
+            }
+
+            if let Some(light_window) = self.editor.find_first_window_of_type(EditorWindowType::LightEditor) {
+                if let Some(light) = world.editor_data.light_selected {
+                    let light_data = &self.editor.windows[light_window].sliders.slider_levels;
+                    let user_color = vec3(1.0 - (light_data[0] as f32 / 200.0), 1.0 - (light_data[1] as f32 / 200.0), 1.0 - (light_data[2] as f32 / 200.0));
+                    let user_radius = (200.0 * USER_RADIUS_FACTOR) - (light_data[3] as f32 * USER_RADIUS_FACTOR);
+                    // let user_strength = light_data[4] as f32 / 100.0;
+                    world.scene.point_lights[light].ambient = user_color * USER_AMBIENT_STRENGTH;
+                    world.scene.point_lights[light].diffuse = user_color;
+                    world.scene.point_lights[light].specular = common::vec3_mix(user_color, vec3(1.0, 1.0, 1.0), USER_SPECULAR_BLEND) * USER_SPECULAR_STRENGTH;
+                    world.scene.point_lights[light].user_color = Some(user_color);
+                    world.scene.point_lights[light].set_attenuation(user_radius);
+                } else {
+                    self.editor.close_all_windows_of_type(EditorWindowType::LightEditor);
+                }
+            }
+        }
+
+        pub fn on_light_selected(&mut self, light: usize, world: &World) {
+            let light: &crate::render::PointLight = world.scene.point_lights.get(light).unwrap();
+            let user_color = light.user_color_or_default();
+            let user_att = light.user_attenuation_or_default();
+            let light_data = vec![200 - (user_color.x * 200.0) as u32, 200 - (user_color.y * 200.0) as u32, 200 - (user_color.z * 200.0) as u32, 200 - (user_att / USER_RADIUS_FACTOR) as u32];
+            if let Some(current) = self.editor.find_first_window_of_type(EditorWindowType::LightEditor) {
+                self.editor.set_window_sliders(current, light_data);
+            } else {
+                self.editor.add_window_with_sliders(EditorWindow::new(EditorWindowType::LightEditor, (100, 100), (200, 300)), light_data);
             }
         }
     }
@@ -663,7 +700,7 @@ pub mod implement {
         pub fn new() -> Self {
             Self {
                 mouse_action_origin: (0.0, 0.0),
-                windows: vec![EditorWindow::new(EditorWindowType::LightEditor, (100, 100), (400, 400))],
+                windows: vec![/*EditorWindow::new(EditorWindowType::LightEditor, (100, 100), (400, 400))*/],
                 highest_focus: 0
             }
         }
@@ -694,13 +731,44 @@ pub mod implement {
             }
         }
 
-        pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, ui: &mut UI, world: &mut World) {
+        pub fn close_all_windows_of_type(&mut self, kind: EditorWindowType) {
+            self.windows.retain(|window| window.window_type != kind);
+        }
+
+        pub fn add_window_with_sliders(&mut self, mut window: EditorWindow, sliders: Vec<u32>) {
+            for i in 0..sliders.len() {
+                window.sliders.slider_levels.push(sliders[i]);
+                window.sliders.sliders.push(SliderInteraction { clicked: false, progress: sliders[i] });
+            }
+            self.add_window(window);
+        }
+
+        pub fn set_window_sliders(&mut self, window: usize, sliders: Vec<u32>) {
+            for i in 0..sliders.len() {
+                self.windows[window].sliders.slider_levels[i] = sliders[i];
+                self.windows[window].sliders.sliders[i] = SliderInteraction { clicked: false, progress: sliders[i] };
+            }
+        }
+
+        pub fn find_first_window_of_type(&mut self, kind: EditorWindowType) -> Option<usize> {
+            for (i, window) in self.windows.iter().enumerate() {
+                if window.window_type == kind {
+                    return Some(i);
+                }
+            }
+
+            None
+        }
+
+        pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, ui: &mut UI, world: &mut World) {            
             ui.begin();
+
+            let rounded_camera_pos = vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25));
 
             if ui.image_button(&input, 0, 200, 32, 32, (0, 0), (32, 32), "ui_buttons") {
                 world.insert_brush(Renderable::Brush(
                     "concrete".to_string(), 
-                    vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25)), 
+                    rounded_camera_pos, 
                     vec3(1.0, 1.0, 1.0), 
                     flags::EXTEND_TEXTURE
                 ));
@@ -711,6 +779,17 @@ pub mod implement {
             }
             if ui.image_button(&input, 0, 200 + 64, 32, 32, (64, 0), (32, 32), "ui_buttons") {
                 self.toggle_window(EditorWindowType::Test);
+            }
+
+            if ui.image_button(&input, 0, 200 + 96, 32, 32, (96, 0), (32, 32), "ui_buttons") {
+                let light = world.scene.add_point_light(PointLight::default(vec3(0.0, 0.0, 0.0)));
+                world.insert_model(Model::new(
+                    false, Matrix4::from_translation(rounded_camera_pos),
+                    vec![
+                        Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, 0.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
+                    ]
+                ).with_light(light, vec3(0.0, 0.0, 0.0))
+                .collider_cuboid(Vector3::zero(), vec3(0.125, 0.125, 0.125)));
             }
 
             let mut interaction_highest_focus = 0;
@@ -813,10 +892,14 @@ pub mod implement {
                         }
                     },
                     EditorWindowType::LightEditor => {
-                        // let progress = window.slider(input, 100, 100, 100, ui);
-
-                        println!("{}", window.vertical_slider(input, 10, 50, 200, ui));
-                        // println!("{}", progress);
+                        let _ = window.vertical_slider(input, 20, 50, 200, ui);
+                        ui.text(14, 20, "Red");
+                        let _ = window.vertical_slider(input, 70, 50, 200, ui);
+                        ui.text(10 + 50, 20, "Green");
+                        let _ = window.vertical_slider(input, 120, 50, 200, ui);
+                        ui.text(14 + 100, 20, "Blue");
+                        let _ = window.vertical_slider(input, 170, 50, 200, ui);
+                        ui.text(6 + 150, 20, "Strength");
                     }
                 }
                 window.sliders.end_of_loop(input);

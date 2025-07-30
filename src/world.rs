@@ -81,7 +81,9 @@ pub struct EditorModeData {
     pub selection_box_scale: Vector3<f32>,
     pub selection_box_vao: Option<NativeVertexArray>,
     pub selection_box_visible: bool,
-    pub apply_material: Option<String>
+    pub apply_material: Option<String>,
+    pub light_selected: Option<usize>,
+    pub open_light_ui: Option<usize>
 }
 
 impl EditorModeData {
@@ -189,7 +191,9 @@ impl World {
                 drag_plane: None,
                 drag_object_scale: None,
                 drag_object_sign: None,
-                apply_material: None
+                apply_material: None,
+                light_selected: None,
+                open_light_ui: None
             }
         };
 
@@ -261,6 +265,13 @@ impl World {
 
     // deduplicate these two somehow?
     fn select_model(&mut self, model: usize) {
+        if !self.models[model].as_ref().unwrap().lights.is_empty() {
+            self.editor_data.light_selected = Some(self.models[model].as_ref().unwrap().lights[0].1);
+            self.editor_data.open_light_ui = self.editor_data.light_selected.clone();
+        } else {
+            self.editor_data.light_selected = None;
+        }
+
         if let Some(current) = self.editor_data.get_selected_model() {
             if current != model {
                 self.editor_data.selection_type = SelectionType::Movement;
@@ -644,6 +655,7 @@ impl World {
         self.editor_data.selection_box_visible = false;
         self.move_arrows_far();
         self.move_boxes_far();
+        self.editor_data.light_selected = None;
     }
 
     pub fn set_model_visible(&mut self, model: usize, visible: bool) {

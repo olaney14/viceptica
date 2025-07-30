@@ -3,9 +3,9 @@ use std::{thread, time::{Duration, Instant}};
 use cgmath::{vec3, Matrix4, SquareMatrix, Vector3, Zero};
 use glow::{HasContext};
 use glutin::surface::GlSurface;
-use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
+use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
-use crate::{collision::RaycastParameters, common::round_to, mesh::{flags, Mesh}, render::{CameraControlScheme, PointLight}, texture::TextureBank, world::{Model, PlayerMovementMode, Renderable}};
+use crate::{collision::RaycastParameters, mesh::{flags, Mesh}, render::{CameraControlScheme, PointLight}, world::{Model, PlayerMovementMode, Renderable}};
 
 mod ui;
 mod mesh;
@@ -76,27 +76,21 @@ fn main() {
         ]
     );
 
-    let lights = Model::new(
-        false,
-        Matrix4::from_translation(vec3(-3.0, 0.0, 0.0)),
-        vec![
-            Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, 0.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
-        ]
-    ).with_light(world.scene.add_point_light(PointLight {
-        constant: 1.0, linear: 0.14, quadratic: 0.07,
-        ambient: vec3(0.15, 0.05, 0.1),
-        diffuse: vec3(0.8, 0.3, 0.5),
-        specular: vec3(1.0, 1.0, 1.0),
-        position: vec3(0.0, 0.0, 0.0)
-    }), vec3(0.0, 0.0, 0.0))
-    .collider_cuboid(Vector3::zero(), vec3(0.125, 0.125, 0.125));
+    // let lights = Model::new(
+    //     false,
+    //     Matrix4::from_translation(vec3(-3.0, 0.0, 0.0)),
+    //     vec![
+    //         Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, 0.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
+    //     ]
+    // ).with_light(world.scene.add_point_light(PointLight::default(vec3(0.0, 0.0, 0.0))), vec3(0.0, 0.0, 0.0))
+    // .collider_cuboid(Vector3::zero(), vec3(0.125, 0.125, 0.125));
 
     unsafe { 
         world.scene.init(&mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
         world.editor_data.selection_box_vao = Some(mesh::create_selection_cube(&gl));
         world.insert_model(mobile);
         world.set_internal_brushes(brushes);
-        world.insert_model(lights);
+        // world.insert_model(lights);
         world.set_arrows_visible(false);
         world.move_boxes_far();
         world.move_arrows_far();

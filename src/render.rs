@@ -69,6 +69,22 @@ pub struct DirLight {
     pub specular: Vector3<f32>
 }
 
+const FIXED_C: f32 = 1.0;
+const FIXED_L: f32 = 0.0;
+
+pub fn attenuation_coefficients(radius: f32, attenuation_threshold: f32) -> (f32, f32, f32) {
+    if radius <= 0.01 {
+        return (FIXED_C, FIXED_L, 100.0);
+    }
+
+    let inv_thresh = 1.0 / attenuation_threshold;
+    let total = inv_thresh - FIXED_C;
+
+    let quadratic = total / (radius * radius);
+
+    (FIXED_C, FIXED_L, quadratic)
+}
+
 #[derive(Clone)]
 pub struct PointLight {
     pub position: Vector3<f32>,
@@ -77,7 +93,43 @@ pub struct PointLight {
     pub quadratic: f32,
     pub ambient: Vector3<f32>,
     pub diffuse: Vector3<f32>,
-    pub specular: Vector3<f32>
+    pub specular: Vector3<f32>,
+    pub user_color: Option<Vector3<f32>>,
+    pub user_attenuation: Option<f32>
+}
+
+impl PointLight {
+    pub fn user_color_or_default(&self) -> Vector3<f32> {
+        self.user_color.unwrap_or(self.diffuse)
+    }
+
+    pub fn user_attenuation_or_default(&self) -> f32 {
+        self.user_attenuation.unwrap_or(10.0)
+    }
+
+    pub fn set_attenuation(&mut self, radius: f32) {
+        let (constant, linear, quadratic) = attenuation_coefficients(radius, 0.05);
+        self.user_attenuation = Some(radius);
+        // println!("{}, {}, {}", constant, linear, quadratic);
+
+        self.constant = constant;
+        self.linear = linear;
+        self.quadratic = quadratic;
+    }
+
+    pub fn default(position: Vector3<f32>) -> Self {
+        let (constant, linear, quadratic) = attenuation_coefficients(10.0, 0.05);
+        
+        Self {
+            ambient: vec3(0.1, 0.1, 0.1),
+            diffuse: vec3(0.5, 0.5, 0.5),
+            specular: vec3(1.0, 1.0, 1.0),
+            constant, linear, quadratic,
+            position,
+            user_attenuation: None,
+            user_color: None
+        }
+    }
 }
 
 pub enum Skybox {
@@ -97,9 +149,9 @@ impl Environment {
             skybox: Skybox::Cubemap(String::from("field")),
             dir_light: DirLight {
                 direction: vec3(-0.2, -1.0, -0.3),
-                ambient: vec3(0.1, 0.1, 0.1),
-                diffuse: vec3(0.5, 0.5, 0.5),
-                specular: vec3(1.0, 1.0, 1.0)
+                ambient: vec3(0.25, 0.25, 0.25),
+                diffuse: vec3(0.6, 0.6, 0.5),
+                specular: vec3(1.0, 1.0, 0.7)
             }
         }
     }
@@ -141,7 +193,6 @@ impl Scene {
         self.skybox_vao = Some(mesh::create_skybox(gl));
         //textures.load_cubemap_by_name("heaven", gl).unwrap();
         //textures.load_cubemap_by_name("cloudy_sky", gl).unwrap();
-
 
         gl.enable(glow::DEPTH_TEST);
         gl.enable(glow::CULL_FACE);
@@ -229,13 +280,6 @@ impl Scene {
             self.render_individual(data, name, meshes, textures, flat_program, gl);
         }
 
-        gl.disable(glow::DEPTH_TEST);
-        // For all types of foreground meshes
-        for (name, data) in self.foreground_meshes.iter() {
-            self.render_individual(data, name, meshes, textures, flat_program, gl);
-        }
-        gl.enable(glow::DEPTH_TEST);
-
         // Render cubemap skybox
         if let Skybox::Cubemap(cubemap) = &self.environment.skybox {
             // https://learnopengl.com/Advanced-OpenGL/Cubemaps
@@ -251,10 +295,22 @@ impl Scene {
             gl.bind_vertex_array(self.skybox_vao);
             gl.bind_texture(glow::TEXTURE_CUBE_MAP, Some(cubemap_texture.inner));
             gl.draw_arrays(glow::TRIANGLES, 0, 36);
-            
+
             gl.depth_func(glow::LESS);
         }
 
+        // this has to be duplicated because of borrowing rules :(((((
+
+        // Render individual
+        let flat_program = programs.get_mut("flat").unwrap();
+        gl.use_program(Some(flat_program.inner));
+
+        gl.disable(glow::DEPTH_TEST);
+        // For all types of foreground meshes
+        for (name, data) in self.foreground_meshes.iter() {
+            self.render_individual(data, name, meshes, textures, flat_program, gl);
+        }
+        gl.enable(glow::DEPTH_TEST);
     }
 
     #[inline]
