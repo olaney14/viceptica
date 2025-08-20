@@ -614,6 +614,7 @@ impl Scene {
     }
 }
 
+#[derive(Clone)]
 pub enum CameraControlScheme {
     FirstPerson(bool),
     Editor

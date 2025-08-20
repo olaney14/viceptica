@@ -85,7 +85,8 @@ pub struct EditorModeData {
     pub apply_material: Option<String>,
     pub light_selected: Option<usize>,
     pub open_light_ui: Option<usize>,
-    pub save_to: Option<PathBuf>
+    pub save_to: Option<PathBuf>,
+    pub show_debug: Vec<String>
 }
 
 impl EditorModeData {
@@ -200,7 +201,8 @@ impl World {
                 apply_material: None,
                 light_selected: None,
                 open_light_ui: None,
-                save_to: None
+                save_to: None,
+                show_debug: Vec::new()
             },
             load_new: None,
             freeze: 0
@@ -306,20 +308,6 @@ impl World {
 
     fn can_be_selected(&mut self, model: usize) -> bool {
         !self.internal.internal_ids.contains(&model)
-        // model != self.internal.arrow_nx &&
-        // model != self.internal.arrow_px &&
-        // model != self.internal.arrow_ny &&
-        // model != self.internal.arrow_py &&
-        // model != self.internal.arrow_nz &&
-        // model != self.internal.arrow_pz &&
-        // model != self.internal.box_nx &&
-        // model != self.internal.box_px &&
-        // model != self.internal.box_ny &&
-        // model != self.internal.box_py &&
-        // model != self.internal.box_nz &&
-        // model != self.internal.box_pz &&
-        // model != self.internal.brushes &&
-        // model != self.internal.debug_arrow
     }
 
     pub fn model_clicked(&mut self, result: RaycastResult) {
@@ -1168,6 +1156,7 @@ impl Model {
     }
 }
 
+#[derive(Clone)]
 pub enum PlayerMovementMode {
     FollowCamera,
     FirstPerson

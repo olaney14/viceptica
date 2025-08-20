@@ -1,4 +1,4 @@
-use std::{thread, time::{Duration, Instant}};
+use std::{sync::{Mutex, Arc}, thread, time::{Duration, Instant}};
 
 use cgmath::{vec3, Matrix4, SquareMatrix, Vector3, Zero};
 use glow::{HasContext};
@@ -28,15 +28,18 @@ fn main() {
     let mut mesh_bank = mesh::MeshBank::new();
     let mut input = input::Input::new();
     let mut world = world::World::new();
-    // let mut ui = unsafe { ui::UI::new(&mut texture_bank, &gl) };
     let mut ui = ui::implement::VicepticaUI::new(&gl);
+    let opengl_debug = Arc::new(Mutex::new(Vec::new()));
 
     unsafe {
         gl.enable(glow::DEBUG_OUTPUT);
-        gl.debug_message_callback(|_, _, _, severity, msg| {
+        let debug_clone = opengl_debug.clone();
+        gl.debug_message_callback(move |_, _, _, severity, msg| {
             if severity == glow::DEBUG_SEVERITY_HIGH {
+                debug_clone.lock().unwrap().push(format!("[OpenGL, high severity] {}", msg));
                 println!("[OpenGL, high severity] {}", msg);
             } else if severity == glow::DEBUG_SEVERITY_MEDIUM {
+                debug_clone.lock().unwrap().push(format!("[OpenGL, medium severity] {}", msg));
                 println!("[OpenGL, medium severity] {}", msg);
             }
         });
@@ -73,15 +76,6 @@ fn main() {
             Renderable::Brush("watering".to_string(), vec3(0.0, -4.5, 0.0), vec3(10.0, 1.0, 10.0), flags::EXTEND_TEXTURE)
         ]
     );
-
-    // let lights = Model::new(
-    //     false,
-    //     Matrix4::from_translation(vec3(-3.0, 0.0, 0.0)),
-    //     vec![
-    //         Renderable::Mesh("blank_cube".to_string(), Matrix4::from_translation(vec3(0.0, 0.0, 0.0)) * Matrix4::from_scale(0.25), flags::FULLBRIGHT),
-    //     ]
-    // ).with_light(world.scene.add_point_light(PointLight::default(vec3(0.0, 0.0, 0.0))), vec3(0.0, 0.0, 0.0))
-    // .collider_cuboid(Vector3::zero(), vec3(0.125, 0.125, 0.125));
 
     unsafe { 
         world.scene.init(&mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
@@ -170,6 +164,10 @@ fn main() {
                             }
                         }
                         
+                        if world.editor_data.active && !ui.inner.mouse_captured && input.scroll.abs() > 0.01 {
+                            world.scene.camera.pos -= world.scene.camera.direction * 0.05 * input.scroll;
+                        }
+
                         world.update(&input, mouse_ray, delta_time);
                         world.scene.camera.update(&input, delta_time);
                         world.scene.update(&mut mesh_bank, &gl);
@@ -177,13 +175,27 @@ fn main() {
                         world.scene.render(&mesh_bank, &mut program_bank, &texture_bank, &gl);
                         world.post_render(&mut program_bank, &gl);
 
+                        for line in world.editor_data.show_debug.drain(..) {
+                            ui.show_debug(&line);
+                        }
+                        for line in opengl_debug.lock().unwrap().drain(..) {
+                            ui.show_debug(&line);
+                        }
                         ui.render_and_update(&input, &mut texture_bank, &mut program_bank, &gl, &mut world);
 
                         gl_surface.swap_buffers(&gl_context).unwrap();
 
                         input.update();
                         if let Some(level_data) = world.load_new.take() {
-                            world = World::from_save_data(level_data, &mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
+                            let mut new_world = World::from_save_data(level_data, &mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
+                            new_world.scene.camera.control_sceme = world.scene.camera.control_sceme.clone();
+                            new_world.player.movement = world.player.movement.clone();
+                            new_world.editor_data.active = world.editor_data.active;
+                            new_world.editor_data.increment = world.editor_data.increment;
+                            new_world.editor_data.save_to = world.editor_data.save_to.clone();
+                            let window_size =  window.inner_size(); 
+                            new_world.scene.camera.on_window_resized(window_size.width as f32, window_size.height as f32);
+                            world = new_world;
                         }
 
                         let frame_duration = Instant::now() - beginning_of_frame;

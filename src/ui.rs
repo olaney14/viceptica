@@ -98,7 +98,7 @@ struct UINode {
 
 impl UINode {
     pub fn root() -> Self {
-        Self { children: Vec::new(), clip: (0, 0, 640 * 2, 480 * 2), draw: ElementType::None, focus: 0, x: 0, y: 0 }
+        Self { children: Vec::new(), clip: (0, 0, 4096, 4096), draw: ElementType::None, focus: 0, x: 0, y: 0 }
     }
 
     /// Recursively sort all UI nodes
@@ -425,6 +425,27 @@ impl UI {
         }   
     }
 
+    pub fn get_text_render_size(text: &str) -> (u32, u32) {
+        let mut width = 0;
+        let mut cur_line_width = 0;
+        let mut height = 10;
+
+        for char in text.chars() {
+            if char == '\n' {
+                height += 10;
+                cur_line_width = 0;
+                continue;
+            }
+
+            cur_line_width += 6;
+            if cur_line_width > width {
+                width = cur_line_width;
+            }
+        }
+
+        (width, height)
+    }
+
     unsafe fn render_slider(slider: &Slider, local_offset: (i32, i32), textures: &TextureBank, ui_program: &mut Program, gl: &glow::Context) {
         let x = slider.x + local_offset.0;
         let y = slider.y + local_offset.1;
@@ -645,6 +666,11 @@ pub mod implement {
             }
         }
 
+        pub fn show_debug(&mut self, message: &str) {
+            //self.editor.debug_output.push((message.to_string(), 300));
+            self.editor.show_debug(message);
+        }
+
         pub unsafe fn init(&mut self, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context) {
             programs.load_by_name_vf("ui", gl).unwrap();
             textures.load_by_name("ui_buttons", gl).unwrap();
@@ -698,7 +724,8 @@ pub mod implement {
     struct EditorModeUI {
         windows: Vec<EditorWindow>,
         mouse_action_origin: (f64, f64),
-        highest_focus: u32
+        highest_focus: u32,
+        debug_output: Vec<(String, u32)>
     }
 
     impl EditorModeUI {
@@ -706,8 +733,13 @@ pub mod implement {
             Self {
                 mouse_action_origin: (0.0, 0.0),
                 windows: vec![/*EditorWindow::new(EditorWindowType::LightEditor, (100, 100), (400, 400))*/],
-                highest_focus: 0
+                highest_focus: 0,
+                debug_output: Vec::new()
             }
+        }
+
+        pub fn show_debug(&mut self, message: &str) {
+            self.debug_output.push((message.to_string(), 1000));
         }
 
         pub fn add_window(&mut self, mut window: EditorWindow) {
@@ -768,6 +800,33 @@ pub mod implement {
         pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, ui: &mut UI, world: &mut World) {            
             ui.begin();
 
+            if self.debug_output.len() > 0 {
+                let screen_edge = ui.screen_size.0 - 8;
+                let mut y = 8;
+
+                for (line, life) in self.debug_output.iter_mut() {
+                    let size = UI::get_text_render_size(line);
+                    let mut x_mod = 0;
+
+                    if *life < 25 {
+                        let a = (25 - *life) as f32 / 20.0;
+                        x_mod = (size.0 as f32 * a) as i32;
+
+                        if *life < 5 {
+                            let a = (5 - *life) as f32 / 5.0;
+                            y -= ((size.1 + 4) as f32 * a) as i32;
+                        }
+                    }
+
+                    ui.text((screen_edge - size.0) as i32 + x_mod, y, line);
+                    y += size.1 as i32 + 4;
+
+                    *life -= 1;
+                }
+
+                self.debug_output.retain(|line| line.1 > 0);
+            }
+
             let rounded_camera_pos = vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25));
 
             if ui.image_button(&input, 0, 200, 32, 32, (0, 0), (32, 32), "ui_buttons") {
@@ -806,6 +865,7 @@ pub mod implement {
             let mut close = None;
             let mut scroll = None;
             let mut contents_clicked = None;
+            let mut debug_messages = Vec::new();
 
             for (i, window) in self.windows.iter_mut().enumerate() {
                 if window.dragging {
@@ -925,7 +985,9 @@ pub mod implement {
                                     let mut file = File::create(path);
                                     if let Ok(file) = &mut file {
                                         file.write_all(&bytes).unwrap();
+                                        debug_messages.push("level saved successfully");
                                     } else {
+                                        debug_messages.push("failed to open or create save file");
                                         eprintln!("Failed to open or create save file");
                                     }
                                 }
@@ -941,18 +1003,22 @@ pub mod implement {
                                     .pick_file();
 
                                 if let Some(load_file) = load_file {
-                                    let mut file = File::open(load_file);
+                                    let mut file = File::open(&load_file);
                                     if let Ok(file) = &mut file {
                                         let mut data = Vec::new();
                                         file.read_to_end(&mut data).expect("Error reading file data");
                                         let archived = rkyv::access::<ArchivedLevelData, rkyv::rancor::Error>(&data.as_slice()).unwrap();
                                         let save_data = rkyv::deserialize::<LevelData, rkyv::rancor::Error>(archived).unwrap();
                                         world.load_new = Some(save_data);
+                                        world.editor_data.save_to = Some(load_file);
+                                        debug_messages.push("new level loaded");
                                     } else {
+                                        debug_messages.push("failed to open level file");
                                         eprintln!("Failed to open level file")
                                     }
                                 }
                             }
+                            ui.text(4, 12, "Load");
                         ui.pop();
 
                         // if ui.image_button(input, 100, 100, 128, 128, (0, 0), (500, 500), "important") {
@@ -977,6 +1043,9 @@ pub mod implement {
                 window.sliders.end_of_loop(input);
 
                 ui.pop();
+            }
+            for message in debug_messages.drain(..) {
+                self.show_debug(message);
             }
 
             if let Some(close) = close {
