@@ -5,7 +5,7 @@ use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix3
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::PhysicalProperties, common, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, ProgramBank}, texture::TextureBank, world::{self, Model, Renderable}};
+use crate::{collision::PhysicalProperties, common, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable}};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -115,6 +115,13 @@ impl PointLight {
         self.constant = constant;
         self.linear = linear;
         self.quadratic = quadratic;
+    }
+
+    pub fn set_color(&mut self, color: Vector3<f32>) {
+        self.ambient = color * ui::implement::USER_AMBIENT_STRENGTH;
+        self.diffuse = color;
+        self.specular = common::vec3_mix(color, vec3(1.0, 1.0, 1.0), ui::implement::USER_SPECULAR_BLEND) * ui::implement::USER_SPECULAR_STRENGTH;
+        self.user_color = Some(color);
     }
 
     pub fn default(position: Vector3<f32>) -> Self {
@@ -315,8 +322,8 @@ impl Scene {
 
     #[inline]
     unsafe fn render_individual(&self, data: &Vec<MobileRenderData>, name: &String, meshes: &MeshBank, textures: &TextureBank, program: &mut shader::Program, gl: &glow::Context) {
-        let mesh = meshes.get(name).unwrap();
-        let material = self.materials.get(&mesh.material).unwrap();
+        let mesh = meshes.get(name).expect(format!("Missing mesh \"{}\"", name).as_str());
+        let material = self.materials.get(&mesh.material).expect(format!("Missing material \"{}\"", mesh.material).as_str());
 
         for data in data.iter() {
             // Skip drawing if this is set as invisible

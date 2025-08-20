@@ -170,7 +170,7 @@ impl UI {
         if title.len() == 0 {
             self.add_child_as_current(UINode {
                 children: Vec::new(),
-                clip: (1, 17, w - 2, h - 18),
+                clip: (1, 1, w - 2, h - 2),
                 draw: ElementType::NineCell(NineCell {
                     x: 0, y: 0, w, h, frame_type: frame
                 }),
@@ -549,17 +549,19 @@ impl UI {
 
 pub mod implement {
     use core::f32;
+    use std::{fs::File, io::{Read, Write}};
 
     use cgmath::{vec3, Matrix4, Vector3, Zero};
+    use rfd::FileDialog;
     use winit::event::MouseButton;
 
-    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
+    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, save::{ArchivedLevelData, LevelData}, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
 
     const MATERIAL_FRAME_SIZE: u32 = 100;
 
-    const USER_AMBIENT_STRENGTH: f32 = 0.3;
-    const USER_SPECULAR_STRENGTH: f32 = 0.7;
-    const USER_SPECULAR_BLEND: f32 = 0.75;
+    pub const USER_AMBIENT_STRENGTH: f32 = 0.3;
+    pub const USER_SPECULAR_STRENGTH: f32 = 0.7;
+    pub const USER_SPECULAR_BLEND: f32 = 0.75;
     const USER_RADIUS_FACTOR: f32 = 1.0 / 5.0;
 
     pub struct VicepticaUI {
@@ -574,7 +576,8 @@ pub mod implement {
     enum EditorWindowType {
         Test,
         MaterialPicker,
-        LightEditor
+        LightEditor,
+        SaveLoad
     }
 
     impl EditorWindowType {
@@ -582,7 +585,8 @@ pub mod implement {
             match self {
                 Self::Test => "Test",
                 Self::MaterialPicker => "Materials",
-                Self::LightEditor => "Light Properties"
+                Self::LightEditor => "Light Properties",
+                Self::SaveLoad => "Save and Load"
             }
         }
     }
@@ -647,6 +651,7 @@ pub mod implement {
             textures.load_by_name("ui_frame", gl).unwrap();
             textures.load_by_name("font", gl).unwrap();
             textures.load_by_name("slider", gl).unwrap();
+            textures.load_by_name("important", gl).unwrap();
         }
 
         pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, world: &mut World) {
@@ -685,7 +690,7 @@ pub mod implement {
             if let Some(current) = self.editor.find_first_window_of_type(EditorWindowType::LightEditor) {
                 self.editor.set_window_sliders(current, light_data);
             } else {
-                self.editor.add_window_with_sliders(EditorWindow::new(EditorWindowType::LightEditor, (100, 100), (200, 300)), light_data);
+                self.editor.add_window_with_sliders(EditorWindow::new(EditorWindowType::LightEditor, (100, 100), (250, 300)), light_data);
             }
         }
     }
@@ -790,6 +795,9 @@ pub mod implement {
                     ]
                 ).with_light(light, vec3(0.0, 0.0, 0.0))
                 .collider_cuboid(Vector3::zero(), vec3(0.125, 0.125, 0.125)));
+            }
+            if ui.image_button(&input, 0, 200 + 128, 32, 32, (128, 0), (32, 32), "ui_buttons") {
+                self.toggle_window(EditorWindowType::SaveLoad);
             }
 
             let mut interaction_highest_focus = 0;
@@ -900,6 +908,70 @@ pub mod implement {
                         ui.text(14 + 100, 20, "Blue");
                         let _ = window.vertical_slider(input, 170, 50, 200, ui);
                         ui.text(6 + 150, 20, "Strength");
+                    },
+                    EditorWindowType::SaveLoad => {
+                        ui.frame(8, 24, 100, 38);
+                            if ui.image_button(input, 1, 1, 98, 36, (0, 0), (1, 1), "evil_pixel") {
+                                if world.editor_data.save_to.is_none() {
+                                    world.editor_data.save_to = FileDialog::new()
+                                        .add_filter("level", &["lv"])
+                                        .set_directory("/res/levels/")
+                                        .save_file();
+                                }
+                                
+                                if let Some(path) = &world.editor_data.save_to {
+                                    let save_data = world.save_data();
+                                    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&save_data).unwrap();
+                                    let mut file = File::create(path);
+                                    if let Ok(file) = &mut file {
+                                        file.write_all(&bytes).unwrap();
+                                    } else {
+                                        eprintln!("Failed to open or create save file");
+                                    }
+                                }
+                            }
+                            ui.text(4, 12, "Save");
+                        ui.pop();
+
+                        ui.frame(8, 24 + 38 + 8, 100, 38);
+                            if ui.image_button(input, 1, 1, 98, 36, (0, 0), (1, 1), "evil_pixel") {
+                                let load_file = FileDialog::new()
+                                    .add_filter("level", &["lv"])
+                                    .set_directory("/res/levels/")
+                                    .pick_file();
+
+                                if let Some(load_file) = load_file {
+                                    let mut file = File::open(load_file);
+                                    if let Ok(file) = &mut file {
+                                        let mut data = Vec::new();
+                                        file.read_to_end(&mut data).expect("Error reading file data");
+                                        let archived = rkyv::access::<ArchivedLevelData, rkyv::rancor::Error>(&data.as_slice()).unwrap();
+                                        let save_data = rkyv::deserialize::<LevelData, rkyv::rancor::Error>(archived).unwrap();
+                                        world.load_new = Some(save_data);
+                                    } else {
+                                        eprintln!("Failed to open level file")
+                                    }
+                                }
+                            }
+                        ui.pop();
+
+                        // if ui.image_button(input, 100, 100, 128, 128, (0, 0), (500, 500), "important") {
+                        //     let save_data = world.save_data();
+                        //     let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&save_data).unwrap();
+
+                        //     let mut file = File::create("test_save.lv").unwrap();
+                        //     file.write_all(&bytes).unwrap();
+                        // }
+
+                        // if ui.image_button(input, 100, 700, 128, 128, (0, 0), (500, 500), "important") {
+                        //     let mut file = File::open("test_save.lv").unwrap();
+                        //     let mut data = Vec::new();
+                        //     file.read_to_end(&mut data).unwrap();
+
+                        //     let archived = rkyv::access::<ArchivedLevelData, rkyv::rancor::Error>(&data.as_slice()).unwrap();
+                        //     let save_data = rkyv::deserialize::<LevelData, rkyv::rancor::Error>(archived).unwrap();
+                        //     world.load_new = Some(save_data);
+                        // }
                     }
                 }
                 window.sliders.end_of_loop(input);

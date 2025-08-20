@@ -5,10 +5,11 @@ use glow::{HasContext};
 use glutin::surface::GlSurface;
 use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
-use crate::{collision::RaycastParameters, mesh::{flags, Mesh}, render::{CameraControlScheme, PointLight}, world::{Model, PlayerMovementMode, Renderable}};
+use crate::{collision::RaycastParameters, mesh::{flags, Mesh}, render::CameraControlScheme, world::{Model, PlayerMovementMode, Renderable, World}};
 
 mod ui;
 mod mesh;
+mod save;
 mod input;
 mod world;
 mod common;
@@ -44,10 +45,7 @@ fn main() {
         world.scene.load_texture_to_material("test", &mut texture_bank, &gl);
         texture_bank.load_by_name("magic_pixel", &gl).unwrap();
         texture_bank.load_by_name("evil_pixel", &gl).unwrap();
-        mesh_bank.add(Mesh::create_square(0.3, 0.2, 0.1, &gl), "square");
-        mesh_bank.add(Mesh::create_material_square("test", &gl), "square_textured");
-        mesh_bank.add(Mesh::create_material_cube("test", &gl), "cube");
-        mesh_bank.add(Mesh::create_cube(&gl), "blank_cube");
+        World::load_basic_meshes(&mut mesh_bank, &gl);
         world.init(&mut mesh_bank, &gl);
     }
 
@@ -182,7 +180,12 @@ fn main() {
                         ui.render_and_update(&input, &mut texture_bank, &mut program_bank, &gl, &mut world);
 
                         gl_surface.swap_buffers(&gl_context).unwrap();
+
                         input.update();
+                        if let Some(level_data) = world.load_new.take() {
+                            world = World::from_save_data(level_data, &mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
+                        }
+
                         let frame_duration = Instant::now() - beginning_of_frame;
                         if let Some(duration) = frame_sleep_duration.checked_sub(frame_duration) {
                             thread::sleep(duration);

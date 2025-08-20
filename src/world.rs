@@ -1,10 +1,11 @@
 use core::f32;
+use std::path::PathBuf;
 
 use cgmath::{vec3, vec4, AbsDiffEq, ElementWise, EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation, SquareMatrix, Vector3, Zero};
 use glow::{HasContext, NativeVertexArray};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, PointLight, Scene}, shader::ProgramBank, texture::TextureBank};
+use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, PointLight, Scene}, save::LevelData, shader::ProgramBank, texture::TextureBank};
 
 pub const BRUSH_TEXTURES: [&str; 8] = [
     "concrete",
@@ -83,7 +84,8 @@ pub struct EditorModeData {
     pub selection_box_visible: bool,
     pub apply_material: Option<String>,
     pub light_selected: Option<usize>,
-    pub open_light_ui: Option<usize>
+    pub open_light_ui: Option<usize>,
+    pub save_to: Option<PathBuf>
 }
 
 impl EditorModeData {
@@ -119,6 +121,9 @@ pub struct World {
     pub air_friction: f32,
     pub internal: InternalModels,
     pub editor_data: EditorModeData,
+    pub load_new: Option<LevelData>,
+    /// this many frames will be ignored
+    pub freeze: u32
 }
 
 pub struct InternalModels {
@@ -135,14 +140,15 @@ pub struct InternalModels {
     pub box_py: usize,
     pub box_ny: usize,
     pub box_pz: usize,
-    pub box_nz: usize
+    pub box_nz: usize,
+    pub internal_ids: Vec<usize>
 }
 
 impl Default for InternalModels {
     fn default() -> Self {
         Self {
             arrow_nx: 0, arrow_ny: 0, arrow_nz: 0, arrow_px: 0, arrow_py: 0, arrow_pz: 0, brushes: 0, debug_arrow: 0,
-            box_nx: 0, box_ny: 0, box_nz: 0, box_px: 0, box_py: 0, box_pz: 0
+            box_nx: 0, box_ny: 0, box_nz: 0, box_px: 0, box_py: 0, box_pz: 0, internal_ids: Vec::new()
         }
     }
 }
@@ -193,8 +199,11 @@ impl World {
                 drag_object_sign: None,
                 apply_material: None,
                 light_selected: None,
-                open_light_ui: None
-            }
+                open_light_ui: None,
+                save_to: None
+            },
+            load_new: None,
+            freeze: 0
         };
 
         world.player.collider = world.physical_scene.add_collider(Collider::cuboid(Vector3::zero(), vec3(0.5, 2.0, 0.5), Vector3::zero()));
@@ -228,6 +237,14 @@ impl World {
         self.internal.box_ny = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
         self.internal.box_pz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
         self.internal.box_nz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
+    
+        self.internal.internal_ids.extend(vec![
+            self.internal.arrow_px, self.internal.arrow_py, self.internal.arrow_pz,
+            self.internal.arrow_nx, self.internal.arrow_ny, self.internal.arrow_nz,
+            self.internal.brushes, self.internal.debug_arrow,
+            self.internal.box_px, self.internal.box_py, self.internal.box_pz,
+            self.internal.box_nx, self.internal.box_ny, self.internal.box_nz,
+        ]);
     }
 
     /// set up editor data for movement/scaling and handle switching
@@ -287,22 +304,22 @@ impl World {
         }
     }
 
-    // this is like REALLY bad
     fn can_be_selected(&mut self, model: usize) -> bool {
-        model != self.internal.arrow_nx &&
-        model != self.internal.arrow_px &&
-        model != self.internal.arrow_ny &&
-        model != self.internal.arrow_py &&
-        model != self.internal.arrow_nz &&
-        model != self.internal.arrow_pz &&
-        model != self.internal.box_nx &&
-        model != self.internal.box_px &&
-        model != self.internal.box_ny &&
-        model != self.internal.box_py &&
-        model != self.internal.box_nz &&
-        model != self.internal.box_pz &&
-        model != self.internal.brushes &&
-        model != self.internal.debug_arrow
+        !self.internal.internal_ids.contains(&model)
+        // model != self.internal.arrow_nx &&
+        // model != self.internal.arrow_px &&
+        // model != self.internal.arrow_ny &&
+        // model != self.internal.arrow_py &&
+        // model != self.internal.arrow_nz &&
+        // model != self.internal.arrow_pz &&
+        // model != self.internal.box_nx &&
+        // model != self.internal.box_px &&
+        // model != self.internal.box_ny &&
+        // model != self.internal.box_py &&
+        // model != self.internal.box_nz &&
+        // model != self.internal.box_pz &&
+        // model != self.internal.brushes &&
+        // model != self.internal.debug_arrow
     }
 
     pub fn model_clicked(&mut self, result: RaycastResult) {
@@ -612,7 +629,9 @@ impl World {
 
     /// Provide a model for the world's internal brushes
     pub fn set_internal_brushes(&mut self, model: Model) {
-        self.internal.brushes = self.insert_model(model)
+        self.internal.internal_ids.remove(self.internal.internal_ids.iter().position(|i| *i == self.internal.brushes).expect("Brushes model was not present"));
+        self.internal.brushes = self.insert_model(model);
+        self.internal.internal_ids.push(self.internal.brushes);
     }
 
     pub fn set_arrows_visible(&mut self, visible: bool) {
@@ -829,6 +848,11 @@ impl World {
     }
 
     pub fn update(&mut self, input: &Input, mouse_ray: (Vector3<f32>, Vector3<f32>), delta_time: f32) {
+        if self.freeze > 0 {
+            self.freeze -= 1;
+            return;
+        }
+
         self.player.update(&self.scene.camera, input);
 
         let mut selection = self.editor_data.selected_object.take();
@@ -983,6 +1007,13 @@ impl World {
                 self.player.velocity = Vector3::zero()
             }
         }
+    }
+
+    pub unsafe fn load_basic_meshes(meshes: &mut MeshBank, gl: &glow::Context) {
+        meshes.add(Mesh::create_square(0.3, 0.2, 0.1, gl), "square");
+        meshes.add(Mesh::create_material_square("test", gl), "square_textured");
+        meshes.add(Mesh::create_material_cube("test", gl), "cube");
+        meshes.add(Mesh::create_cube(gl), "blank_cube");
     }
 }
 

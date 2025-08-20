@@ -2,6 +2,7 @@ use core::f32;
 
 use cgmath::{vec3, vec4, InnerSpace, Vector3, Zero};
 use parry3d::{bounding_volume::{Aabb, BoundingVolume}, na::{Isometry3, Point3}, query::{self, Contact, Ray}, shape::{Cuboid, Shape}};
+use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::world::{Model, ModelCollider, Renderable, World};
 
@@ -316,7 +317,7 @@ pub struct MoveSlideResult {
     pub final_position: Vector3<f32>
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Archive, Serialize, Deserialize)]
 pub struct PhysicalProperties {
     pub friction: f32,
     pub control: f32
