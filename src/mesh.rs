@@ -16,9 +16,11 @@ pub type VertexComponent = f32;
 pub type IndexComponent = u16;
 
 pub mod flags {
-    pub const EXTEND_TEXTURE: u32 =     0b001;
-    pub const FULLBRIGHT: u32 =         0b010;
-    pub const SKIP: u32 =               0b100;
+    pub const NONE: u32 =               0b0000;
+    pub const EXTEND_TEXTURE: u32 =     0b0001;
+    pub const FULLBRIGHT: u32 =         0b0010;
+    pub const SKIP: u32 =               0b0100;
+    pub const CUTOUT: u32 =             0b1000;
 }
 
 const VERTEX_ATTRIBUTES_COUNT: u32 = 4;
@@ -133,13 +135,13 @@ impl Mesh {
 
     pub unsafe fn create_square(r: VertexComponent, g: VertexComponent, b: VertexComponent, gl: &glow::Context) -> Self {
         Self::from_data(&[
-             0.5,  0.5, 0.0, r, g, b, 1.0, 1.0, 0.0, 0.0, -1.0,
-             0.5, -0.5, 0.0, r, g, b, 1.0, 0.0, 0.0, 0.0, -1.0,
-            -0.5, -0.5, 0.0, r, g, b, 0.0, 0.0, 0.0, 0.0, -1.0,
-            -0.5,  0.5, 0.0, r, g, b, 0.0, 1.0, 0.0, 0.0, -1.0
+             0.5,  0.5, 0.0, r, g, b, 0.99, 0.99, 0.0, 0.0, -1.0,
+             0.5, -0.5, 0.0, r, g, b, 0.99, 0.01, 0.0, 0.0, -1.0,
+            -0.5, -0.5, 0.0, r, g, b, 0.01, 0.01, 0.0, 0.0, -1.0,
+            -0.5,  0.5, 0.0, r, g, b, 0.01, 0.99, 0.0, 0.0, -1.0
         ], &[
-            0, 1, 3,
-            1, 2, 3
+            1, 0, 3,
+            3, 2, 1
         ], gl)
     }
 

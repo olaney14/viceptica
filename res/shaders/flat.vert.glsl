@@ -6,6 +6,7 @@ layout (location = 3) in vec3 aNormal;
 out vec3 vertexColor;
 out vec2 TexCoord;
 flat out uint fullbright;
+flat out uint cutout;
 out vec3 normal;
 out vec3 fragPos;
 
@@ -21,6 +22,7 @@ void main() {
     vertexColor = aColor;
     uint extend_texture = flags & 1;
     fullbright = flags & 2;
+    cutout = flags & 8;
     
     fragPos = vec3(model * vec4(aPos, 1.0));
     normal = mat3(transpose(inverse(model))) * aNormal;

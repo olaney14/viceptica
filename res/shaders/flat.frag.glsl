@@ -3,6 +3,7 @@ out vec4 FragColor;
 in vec3 vertexColor;
 in vec2 TexCoord;
 flat in uint fullbright;
+flat in uint cutout;
 in vec3 normal;
 in vec3 fragPos;
 
@@ -47,7 +48,15 @@ void main() {
     vec3 norm = normalize(normal);
     vec3 viewDir = normalize(viewPos - fragPos);
 
-    FragColor = vec4(vertexColor, 1.0f);
+    vec4 diffusePx = texture(material.diffuse, TexCoord);
+    FragColor = vec4(vertexColor * vec3(diffusePx), 1.0f);
+
+    if (cutout > 0) {
+        if (diffusePx.a < 0.1) {
+            discard;
+            return;
+        }
+    }
 
     if (fullbright == 0) {
         vec3 result = calcDirLight(dirLight, norm, viewDir);

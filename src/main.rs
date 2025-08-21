@@ -18,6 +18,7 @@ mod shader;
 mod window;
 mod texture;
 mod collision;
+mod component;
 
 const MS_PER_FRAME: u64 = 8;
 
@@ -77,10 +78,20 @@ fn main() {
         ]
     );
 
+    unsafe { texture_bank.load_by_name("komari", &gl).unwrap(); }
+    let billboard = Model::new(
+        true,
+        Matrix4::from_translation(vec3(0.0, 1.0, 0.0)) * Matrix4::from_nonuniform_scale(1.0, 2.0, 1.0),
+        vec![
+            Renderable::Billboard("komari".to_string(), vec3(0.0, 0.0, 0.0), (1.0, 2.0), flags::FULLBRIGHT | flags::CUTOUT, false)
+        ]
+    ).collider_cuboid(vec3(0.0, 0.0, 0.0), vec3(0.125, 0.125, 0.125)).non_solid();
+
     unsafe { 
         world.scene.init(&mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
         world.editor_data.selection_box_vao = Some(mesh::create_selection_cube(&gl));
         world.insert_model(mobile);
+        world.insert_model(billboard);
         world.set_internal_brushes(brushes);
         // world.insert_model(lights);
         world.set_arrows_visible(false);

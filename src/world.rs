@@ -5,7 +5,7 @@ use cgmath::{vec3, vec4, AbsDiffEq, ElementWise, EuclideanSpace, InnerSpace, Mat
 use glow::{HasContext, NativeVertexArray};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, PointLight, Scene}, save::LevelData, shader::ProgramBank, texture::TextureBank};
+use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, component::Component, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, PointLight, Scene}, save::LevelData, shader::ProgramBank, texture::TextureBank};
 
 pub const BRUSH_TEXTURES: [&str; 8] = [
     "concrete",
@@ -801,7 +801,8 @@ impl World {
             lights: Vec::new(),
             mobile: model.mobile,
             render: model.render.clone(),
-            renderable_indices: Vec::new()
+            renderable_indices: Vec::new(),
+            components: model.components.clone()
         };
 
         for (offset, i) in model.lights.iter() {
@@ -1008,14 +1009,16 @@ impl World {
 #[derive(Clone, Debug)]
 pub enum Renderable {
     Mesh(String, Matrix4<f32>, u32),
-    Brush(String, Vector3<f32>, Vector3<f32>, u32)
+    Brush(String, Vector3<f32>, Vector3<f32>, u32),
+    Billboard(String, Vector3<f32>, (f32, f32), u32, bool)
 }
 
 impl Renderable {
     pub fn get_mesh(&self) -> Option<&str> {
         match self {
             Self::Mesh(s, _, _) => Some(s),
-            Self::Brush(s, _, _, _) => Some(s)
+            Self::Brush(s, _, _, _) => Some(s),
+            _ => None
         }
     }
 }
@@ -1041,7 +1044,8 @@ pub struct Model {
     pub solid: bool,
     /// offset, half extents
     pub extents: Option<(Vector3<f32>, Vector3<f32>)>,
-    pub lights: Vec<(Vector3<f32>, usize)>
+    pub lights: Vec<(Vector3<f32>, usize)>,
+    pub components: Vec<Component>
 }
 
 impl Model {
@@ -1057,7 +1061,8 @@ impl Model {
             foreground: false,
             solid: true,
             extents: None,
-            lights: Vec::new()
+            lights: Vec::new(),
+            components: Vec::new()
         }
     }
 
@@ -1077,7 +1082,8 @@ impl Model {
             foreground: false,
             solid: true,
             extents: None,
-            lights: Vec::new()
+            lights: Vec::new(),
+            components: Vec::new()
         };
 
         while let Some(_) = meshes.get(&format!("File_{}{}", file, current_index)) {
@@ -1104,7 +1110,8 @@ impl Model {
         for renderable in self.render.iter_mut() {
             match renderable {
                 Renderable::Brush(_, _, _, flags) => *flags |= flags::FULLBRIGHT,
-                Renderable::Mesh(_, _, flags) => *flags |= flags::FULLBRIGHT
+                Renderable::Mesh(_, _, flags) => *flags |= flags::FULLBRIGHT,
+                Renderable::Billboard(_, _, _, flags, _) => *flags |= flags::FULLBRIGHT
             }
         }
         self

@@ -1,11 +1,11 @@
 use core::f32;
 use std::{collections::HashMap, sync::LazyLock};
 
-use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, SquareMatrix, Vector3};
+use cgmath::{point3, vec3, vec4, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix, Matrix3, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Transform, Vector3, Zero};
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::PhysicalProperties, common, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable}};
+use crate::{collision::PhysicalProperties, common, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable}};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -33,6 +33,25 @@ static DUMMY_RENDER_DATA: LazyLock<MobileRenderData> = LazyLock::new(|| {
         flags: 0,
         transform: Matrix4::identity(),
         draw: false
+    }
+});
+
+#[derive(Clone, Copy, Debug)]
+pub struct BillboardRenderData {
+    pub flags: u32,
+    pub position: Vector3<f32>,
+    pub draw: bool,
+    pub follow_vertical: bool,
+    pub size: (f32, f32)
+}
+
+static DUMMY_BILLBOARD_DATA: LazyLock<BillboardRenderData> = LazyLock::new(|| {
+    BillboardRenderData { 
+        draw: false,
+        flags: 0,
+        follow_vertical: false,
+        position: Vector3::zero(),
+        size: (1.0, 1.0)
     }
 });
 
@@ -153,7 +172,7 @@ pub struct Environment {
 impl Environment {
     pub fn new() -> Self {
         Self {
-            skybox: Skybox::Cubemap(String::from("field")),
+            skybox: Skybox::Cubemap(String::from("heaven")),
             dir_light: DirLight {
                 direction: vec3(-0.2, -1.0, -0.3),
                 ambient: vec3(0.25, 0.25, 0.25),
@@ -176,6 +195,7 @@ pub struct Scene {
     /// Meshed rendered individually
     pub mobile_meshes: HashMap<String, Vec<MobileRenderData>>,
     pub foreground_meshes: HashMap<String, Vec<MobileRenderData>>,
+    pub billboards: HashMap<String, Vec<BillboardRenderData>>,
     pub camera: Camera,
     pub materials: HashMap<String, Material>,
     pub environment: Environment,
@@ -196,7 +216,11 @@ impl Scene {
         programs.load_by_name_vf("skybox", gl).unwrap();
         self.add_default_materials();
         world::load_brushes(textures, meshes, self, &gl);
-        textures.load_cubemap_by_name("field", gl).unwrap();
+        // billboards
+        meshes.add(Mesh::create_square(1.0, 1.0, 1.0, gl), "quad");
+        // textures.load_cubemap_by_name("field", gl).unwrap();
+        // textures.load_cubemap_by_name("google", gl).unwrap();
+        textures.load_cubemap_by_name("heaven", gl).unwrap();
         self.skybox_vao = Some(mesh::create_skybox(gl));
         //textures.load_cubemap_by_name("heaven", gl).unwrap();
         //textures.load_cubemap_by_name("cloudy_sky", gl).unwrap();
@@ -209,6 +233,47 @@ impl Scene {
         if self.statics_dirty {
             self.prepare_statics(meshes, gl);
             self.statics_dirty = false;
+        }
+    }
+
+    /// Call while flat program is being used
+    unsafe fn render_billboards(&self, meshes: &MeshBank, program: &mut Program, textures: &TextureBank, gl: &glow::Context) {
+        let mesh = meshes.get("quad").expect("no quad mesh");
+        
+        for (texture, data) in self.billboards.iter() {
+            for data in data.iter() {
+                if !data.draw { continue; }
+                
+                let forward = if data.follow_vertical {
+                    (self.camera.pos.to_vec() - data.position).normalize()
+                } else {
+                    let mut f = -self.camera.direction;
+                    f.y = 0.0;
+                    f.normalize()
+                }; 
+
+                let right = self.camera.up.cross(forward).normalize();
+                let up = forward.cross(right);
+
+                let view_rot = Matrix3::from_cols(right, up, forward);
+
+                let transform = Matrix4::from_translation(data.position) * Matrix4::from_nonuniform_scale(data.size.0, data.size.1, 1.0) * common::mat3_to_mat4(view_rot);
+                program.uniform_matrix4f32("model", transform, gl);
+                program.uniform_1i32("flags", data.flags as i32, gl);
+                program.uniform_1f32("material.shininess", 1.0, gl);
+                gl.active_texture(glow::TEXTURE0);
+                gl.bind_texture(glow::TEXTURE_2D, textures.get(texture).map(|s| s.inner));
+                gl.active_texture(glow::TEXTURE1);
+                gl.bind_texture(glow::TEXTURE_2D, textures.get("evil_pixel").map(|s| s.inner));
+                gl.bind_vertex_array(Some(mesh.vao));
+
+                gl.draw_elements(
+                    glow::TRIANGLES,
+                    mesh.indices as i32,
+                    glow::UNSIGNED_SHORT,
+                    0
+                );
+            }
         }
     }
 
@@ -286,6 +351,8 @@ impl Scene {
         for (name, data) in self.mobile_meshes.iter() {
             self.render_individual(data, name, meshes, textures, flat_program, gl);
         }
+
+        self.render_billboards(meshes, flat_program, textures, gl);
 
         // Render cubemap skybox
         if let Skybox::Cubemap(cubemap) = &self.environment.skybox {
@@ -396,6 +463,14 @@ impl Scene {
         }
     }
 
+    fn add_billboard(&mut self, texture: &str, position: Vector3<f32>, size: (f32, f32), flags: u32, follow_vertical: bool) {
+        if let Some(data) = self.billboards.get_mut(texture) {
+            data.push(BillboardRenderData { position, flags, size, follow_vertical, draw: true });
+        } else {
+            self.billboards.insert(texture.to_string(), vec![BillboardRenderData { position, flags, size, follow_vertical, draw: true }]);
+        }
+    }
+
     fn insert_mesh_from_model(&mut self, name: &String, transform: &Matrix4<f32>, flags: u32, model: &Model, renderable_indices: &mut Vec<usize>) {
         if model.foreground {
             self.add_foreground_mesh(name, model.transform * transform, flags);
@@ -425,6 +500,11 @@ impl Scene {
                     let name = format!("Brush_{}", texture);
                     let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
                     self.insert_mesh_from_model(&name, &transform, *flags, model, &mut renderable_indices);
+                },
+                Renderable::Billboard(texture, position, size, flags, follow_vertical) => {
+                    let transformed_position = model.transform.transform_point(Point3::from_vec(*position)).to_vec();
+                    self.add_billboard(texture.as_str(), transformed_position, *size, *flags, *follow_vertical);
+                    renderable_indices.push(self.billboards.get(texture).unwrap().len() - 1);
                 }
             }
         }
@@ -446,6 +526,10 @@ impl Scene {
                 let mut renderable_indices = Vec::new();
                 self.insert_mesh_from_model(&name, &transform, flags, model, &mut renderable_indices);
                 model.renderable_indices.extend(renderable_indices.drain(..));
+            },
+            Renderable::Billboard(ref texture, position, size, flags, follow_vertical) => {
+                self.add_billboard(texture.as_str(), position, size, flags, follow_vertical);
+                model.renderable_indices.push(self.billboards.get(texture).unwrap().len() - 1);
             }
         }
         
@@ -474,6 +558,9 @@ impl Scene {
             },
             Renderable::Mesh(name, _, _) => {
                 self.remove_mesh(data_index, &name, model);
+            },
+            Renderable::Billboard(texture, _, _, _, _) => {
+                *self.billboards.get_mut(texture).unwrap().get_mut(index).unwrap() = *DUMMY_BILLBOARD_DATA;
             }
         }
 
@@ -506,6 +593,19 @@ impl Scene {
         }
     }
 
+    // fn move_billboard(&mut self, texture: &str, index: usize, new_position: Vector3<f32>) {
+    //     self.billboards.get_mut(texture).unwrap()[index].position = new_position;
+    // }
+
+    fn update_model_transform_common(&mut self, renderable: &Renderable, index: usize, model_transform: Matrix4<f32>) {
+        match renderable {
+            Renderable::Billboard(texture, position, _, _, _) => {
+                self.billboards.get_mut(texture).unwrap()[index].position = model_transform.transform_point(Point3::from_vec(*position)).to_vec();
+            },
+            _ => unreachable!()
+        }
+    }
+
     /// Just updates the transform for a mobile mesh,<br>
     /// But when updating a static mesh all other instances of the same type must be rebuffered so be careful
     pub fn update_model_transform(&mut self, model: &Model) {
@@ -519,7 +619,8 @@ impl Scene {
                         let name = format!("Brush_{}", texture);
                         let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
                         self.foreground_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
-                    }
+                    },
+                    _ => self.update_model_transform_common(renderable, *index, model.transform),
                 }
             }
         } else if !model.mobile {
@@ -534,7 +635,8 @@ impl Scene {
                         let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
                         self.static_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
                         self.mark_static(&name);
-                    }
+                    },
+                    _ => self.update_model_transform_common(renderable, *index, model.transform),
                 }
             }
         } else {
@@ -547,7 +649,8 @@ impl Scene {
                         let name = format!("Brush_{}", texture);
                         let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
                         self.mobile_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
-                    }
+                    },
+                    _ => self.update_model_transform_common(renderable, *index, model.transform), // we was here
                 }
             }
         }
@@ -565,7 +668,8 @@ impl Scene {
             environment: Environment::new(),
             point_lights: Vec::new(),
             statics_dirty: false,
-            skybox_vao: None
+            skybox_vao: None,
+            billboards: HashMap::new()
         }
     }
 

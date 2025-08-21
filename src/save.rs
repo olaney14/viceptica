@@ -32,7 +32,8 @@ pub struct MaterialData {
 #[derive(Archive, Deserialize, Serialize, Debug)]
 pub enum ModelRenderableData {
     Mesh(String, [[f32; 4]; 4], u32),
-    Brush(String, [f32; 3], [f32; 3], u32)
+    Brush(String, [f32; 3], [f32; 3], u32),
+    Billboard(String, [f32; 3], [f32; 2], u32, bool)
 }
 
 impl ModelRenderableData {
@@ -43,6 +44,9 @@ impl ModelRenderableData {
             },
             world::Renderable::Brush(material, origin, extents, flags) => {
                 Self::Brush(material.to_owned(), (*origin).into(), (*extents).into(), *flags)
+            },
+            world::Renderable::Billboard(texture, origin, size, flags, follow_vertical) => {
+                Self::Billboard(texture.to_owned(), (*origin).into(), [size.0, size.1], *flags, *follow_vertical)
             }
         }
     }
@@ -54,6 +58,9 @@ impl ModelRenderableData {
             },
             Self::Brush(material, origin, extents, flags) => {
                 world::Renderable::Brush(material.to_owned(), (*origin).into(), (*extents).into(), *flags)
+            },
+            Self::Billboard(texture, origin, size, flags, follow_vertical) => {
+                world::Renderable::Billboard(texture.to_owned(), (*origin).into(), (size[0], size[1]), *flags, *follow_vertical)
             }
         }
     }
