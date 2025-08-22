@@ -1,7 +1,7 @@
 use cgmath::{Matrix4, SquareMatrix, Vector3, Zero};
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::{collision, mesh::{self, MeshBank}, render, shader::ProgramBank, texture::TextureBank, world::{self, Model, World}};
+use crate::{collision, mesh::{self, MeshBank}, render::{self, DirLight, Environment, Skybox}, shader::ProgramBank, texture::TextureBank, world::{self, Model, World}};
 
 #[derive(Archive, Deserialize, Serialize)]
 pub struct BrushData {
@@ -12,12 +12,27 @@ pub struct BrushData {
 }
 
 #[derive(Archive, Deserialize, Serialize)]
+pub struct DirLightData {
+    direction: [f32; 3],
+    ambient: [f32; 3],
+    diffuse: [f32; 3],
+    specular: [f32; 3]
+}
+
+#[derive(Archive, Deserialize, Serialize)]
+pub struct EnvironmentData {
+    skybox: render::Skybox,
+    dir_light: DirLightData
+}
+
+#[derive(Archive, Deserialize, Serialize)]
 pub struct LevelData {
     models: Vec<ModelData>,
     brushes: Vec<BrushData>,
     gravity: f32,
     air_friction: f32,
-    materials: Vec<MaterialData>
+    materials: Vec<MaterialData>,
+    environment: Option<EnvironmentData>
 }
 
 #[derive(Archive, Deserialize, Serialize)]
@@ -244,12 +259,23 @@ impl World {
             });
         }
 
+        let environment = EnvironmentData {
+            skybox: self.scene.environment.skybox.clone(),
+            dir_light: DirLightData {
+                ambient: self.scene.environment.dir_light.ambient.into(),
+                diffuse: self.scene.environment.dir_light.diffuse.into(),
+                direction: self.scene.environment.dir_light.direction.into(),
+                specular: self.scene.environment.dir_light.ambient.into()
+            }
+        };
+
         LevelData {
             air_friction: self.air_friction,
             gravity: self.gravity,
             brushes,
             models,
-            materials
+            materials,
+            environment: Some(environment)
         }
     }
 
@@ -279,6 +305,33 @@ impl World {
             brushes.render.push(world::Renderable::Brush(brush.material.to_owned(), brush.origin.into(), brush.extents.into(), brush.flags));
         }
 
+        {
+            let environment = data.environment.unwrap_or(EnvironmentData {
+                dir_light: DirLightData {
+                    ambient: [0.3, 0.3, 0.3],
+                    diffuse: [0.6, 0.6, 0.6],
+                    specular: [0.75, 0.75, 0.75],
+                    direction: [-0.2, -1.0, -0.3]
+                },
+                skybox: render::Skybox::Cubemap("field".to_string())
+            });
+
+            if let Skybox::Cubemap(cubemap) = &environment.skybox {
+                if !textures.cubemaps.contains_key(cubemap) {
+                    textures.load_cubemap_by_name(cubemap, gl).unwrap();
+                }
+            }
+            world.scene.environment = Environment {
+                dir_light: DirLight {
+                    ambient: environment.dir_light.ambient.into(),
+                    diffuse: environment.dir_light.diffuse.into(),
+                    direction: environment.dir_light.direction.into(),
+                    specular: environment.dir_light.specular.into()
+                },
+                skybox: environment.skybox.clone()
+            };
+        }
+
         world.scene.init(textures, meshes, programs, gl);
         world.editor_data.selection_box_vao = Some(mesh::create_selection_cube(&gl));
         world.set_internal_brushes(brushes);
@@ -290,5 +343,31 @@ impl World {
         world.freeze = 1;
 
         world
+    }
+}
+
+pub mod data_fix {
+    use crate::save::*;
+
+    #[derive(Archive, Deserialize, Serialize)]
+    pub struct LevelDataOld {
+        models: Vec<ModelData>,
+        brushes: Vec<BrushData>,
+        gravity: f32,
+        air_friction: f32,
+        materials: Vec<MaterialData>
+    }
+
+    impl LevelDataOld {
+        pub fn into_new(self) -> LevelData {
+            LevelData {
+                air_friction: self.air_friction,
+                brushes: self.brushes,
+                environment: None,
+                gravity: self.gravity,
+                materials: self.materials,
+                models: self.models
+            }
+        }
     }
 }

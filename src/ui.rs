@@ -570,13 +570,13 @@ impl UI {
 
 pub mod implement {
     use core::f32;
-    use std::{fs::File, io::{Read, Write}};
+    use std::{ffi::OsString, fs::File, io::{Read, Write}};
 
     use cgmath::{vec3, Matrix4, Vector3, Zero};
     use rfd::FileDialog;
     use winit::event::MouseButton;
 
-    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, save::{ArchivedLevelData, LevelData}, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
+    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, save::{data_fix, ArchivedLevelData, LevelData}, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
 
     const MATERIAL_FRAME_SIZE: u32 = 100;
 
@@ -598,7 +598,8 @@ pub mod implement {
         Test,
         MaterialPicker,
         LightEditor,
-        SaveLoad
+        SaveLoad,
+        Environment
     }
 
     impl EditorWindowType {
@@ -607,7 +608,8 @@ pub mod implement {
                 Self::Test => "Test",
                 Self::MaterialPicker => "Materials",
                 Self::LightEditor => "Light Properties",
-                Self::SaveLoad => "Save and Load"
+                Self::SaveLoad => "Save and Load",
+                Self::Environment => "Environment Properties"
             }
         }
     }
@@ -768,6 +770,21 @@ pub mod implement {
             }
         }
 
+        fn toggle_window_with_sliders(&mut self, window_type: EditorWindowType, sliders: Vec<u32>) {
+            let mut open = None;
+            for (i, window) in self.windows.iter().enumerate() {
+                if window.window_type == window_type {
+                    open = Some(i);
+                }
+            }
+
+            if let Some(i) = open {
+                self.windows.remove(i);
+            } else {
+                self.add_window_with_sliders(EditorWindow::new(window_type, (100, 100), (400, 400)), sliders);
+            }
+        }
+
         pub fn close_all_windows_of_type(&mut self, kind: EditorWindowType) {
             self.windows.retain(|window| window.window_type != kind);
         }
@@ -857,6 +874,12 @@ pub mod implement {
             }
             if ui.image_button(&input, 0, 200 + 128, 32, 32, (128, 0), (32, 32), "ui_buttons") {
                 self.toggle_window(EditorWindowType::SaveLoad);
+            }
+            if ui.image_button(&input, 0, 200 + 128 + 32, 32, 32, (128 + 32, 0), (32, 32), "ui_buttons") {
+                let cur_color = world.scene.environment.dir_light.diffuse;
+                let light_data = vec![200 - (cur_color.x * 200.0) as u32, 200 - (cur_color.y * 200.0) as u32, 200 - (cur_color.z * 200.0) as u32];
+
+                self.toggle_window_with_sliders(EditorWindowType::Environment, light_data);
             }
 
             let mut interaction_highest_focus = 0;
@@ -985,9 +1008,9 @@ pub mod implement {
                                     let mut file = File::create(path);
                                     if let Ok(file) = &mut file {
                                         file.write_all(&bytes).unwrap();
-                                        debug_messages.push("level saved successfully");
+                                        debug_messages.push("level saved successfully".to_string());
                                     } else {
-                                        debug_messages.push("failed to open or create save file");
+                                        debug_messages.push("failed to open or create save file".to_string());
                                         eprintln!("Failed to open or create save file");
                                     }
                                 }
@@ -1009,35 +1032,76 @@ pub mod implement {
                                         file.read_to_end(&mut data).expect("Error reading file data");
                                         let archived = rkyv::access::<ArchivedLevelData, rkyv::rancor::Error>(&data.as_slice()).unwrap();
                                         let save_data = rkyv::deserialize::<LevelData, rkyv::rancor::Error>(archived).unwrap();
+                                        //let archived = rkyv::access::<data_fix::ArchivedLevelDataOld, rkyv::rancor::Error>(&data.as_slice()).unwrap();
+                                        //let save_data = rkyv::deserialize::<data_fix::LevelDataOld, rkyv::rancor::Error>(archived).unwrap().into_new();
                                         world.load_new = Some(save_data);
                                         world.editor_data.save_to = Some(load_file);
-                                        debug_messages.push("new level loaded");
+                                        debug_messages.push("new level loaded".to_string());
                                     } else {
-                                        debug_messages.push("failed to open level file");
+                                        debug_messages.push("failed to open level file".to_string());
                                         eprintln!("Failed to open level file")
                                     }
                                 }
                             }
                             ui.text(4, 12, "Load");
                         ui.pop();
+                    },
+                    EditorWindowType::Environment => {
+                        ui.text(14, 20, "Sun Color");
+                        let r = window.vertical_slider(input, 20, 50 + 16, 200, ui);
+                        ui.text(14, 20 + 16, "Red");
+                        let g = window.vertical_slider(input, 70, 50 + 16, 200, ui);
+                        ui.text(10 + 50, 20 + 16, "Green");
+                        let b = window.vertical_slider(input, 120, 50 + 16, 200, ui);
+                        ui.text(14 + 100, 20 + 16, "Blue");
+                        
+                        let diffuse = vec3(r as f32 / 200.0, g as f32 / 200.0, b as f32 / 200.0);
+                        world.scene.environment.dir_light.diffuse = diffuse;
+                        world.scene.environment.dir_light.ambient = diffuse * 0.5;
 
-                        // if ui.image_button(input, 100, 100, 128, 128, (0, 0), (500, 500), "important") {
-                        //     let save_data = world.save_data();
-                        //     let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&save_data).unwrap();
+                        ui.frame(8, 300, 200, 38);
+                            if ui.image_button(input, 2, 2, 196, 36, (0, 0), (1, 1), "evil_pixel") {
+                                world.scene.environment.dir_light.direction = world.scene.camera.direction;
+                            }
+                            ui.text(4, 8, "Set sun direction \nto camera direction");
+                        ui.pop();
+                        ui.frame(8, 350, 100, 38);
+                            if ui.image_button(input, 2, 2, 96, 36, (0, 0), (1, 1), "evil_pixel") {
+                                let skybox_folder = FileDialog::new()
+                                    .set_directory("/res/textures/cubemap/")
+                                    .pick_folder();
 
-                        //     let mut file = File::create("test_save.lv").unwrap();
-                        //     file.write_all(&bytes).unwrap();
-                        // }
-
-                        // if ui.image_button(input, 100, 700, 128, 128, (0, 0), (500, 500), "important") {
-                        //     let mut file = File::open("test_save.lv").unwrap();
-                        //     let mut data = Vec::new();
-                        //     file.read_to_end(&mut data).unwrap();
-
-                        //     let archived = rkyv::access::<ArchivedLevelData, rkyv::rancor::Error>(&data.as_slice()).unwrap();
-                        //     let save_data = rkyv::deserialize::<LevelData, rkyv::rancor::Error>(archived).unwrap();
-                        //     world.load_new = Some(save_data);
-                        // }
+                                if let Some(skybox_folder) = skybox_folder {
+                                    let error_string = OsString::from("error");
+                                    let skybox = skybox_folder.file_name().unwrap_or(&error_string).to_str().unwrap();
+                                    if !textures.cubemaps.contains_key(skybox) {
+                                        if let Err(e) = textures.load_cubemap_by_name(skybox, gl) {
+                                            debug_messages.push(format!("{}", e));
+                                        } else {
+                                            world.scene.environment.skybox = crate::render::Skybox::Cubemap(skybox.to_string());
+                                            debug_messages.push(format!("loaded skybox {}", skybox));
+                                            // println!("{:?}", world.scene.environment.skybox);
+                                        }
+                                    } else {
+                                        world.scene.environment.skybox = crate::render::Skybox::Cubemap(skybox.to_string());
+                                        debug_messages.push(format!("loaded skybox {}", skybox));
+                                    }
+                                }
+                            }
+                            ui.text(4, 8, "Load skybox");
+                        ui.pop();
+                        ui.frame(125, 350, 100, 38);
+                            if ui.image_button(input, 2, 2, 96, 36, (0, 0), (1, 1), "evil_pixel") {
+                                world.scene.environment.skybox = crate::render::Skybox::SolidColor(0.0, 0.0, 0.0);
+                            }
+                            ui.text(4, 8, "Clear skybox");
+                        ui.pop();
+                        ui.frame(250, 350, 100, 38);
+                            if ui.image_button(input, 2, 2, 96, 36, (0, 0), (1, 1), "evil_pixel") {
+                                world.scene.environment.skybox = crate::render::Skybox::NoClear;
+                            }
+                            ui.text(4, 8, "idgaf skybox");
+                        ui.pop();
                     }
                 }
                 window.sliders.end_of_loop(input);
@@ -1045,7 +1109,7 @@ pub mod implement {
                 ui.pop();
             }
             for message in debug_messages.drain(..) {
-                self.show_debug(message);
+                self.show_debug(&message);
             }
 
             if let Some(close) = close {

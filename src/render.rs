@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::LazyLock};
 
 use cgmath::{point3, vec3, vec4, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix, Matrix3, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Transform, Vector3, Zero};
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
+use rkyv::{Archive, Deserialize, Serialize};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
 use crate::{collision::PhysicalProperties, common, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable}};
@@ -81,6 +82,7 @@ impl Material {
     }
 }
 
+#[derive(Clone)]
 pub struct DirLight {
     pub direction: Vector3<f32>,
     pub ambient: Vector3<f32>,
@@ -158,6 +160,7 @@ impl PointLight {
     }
 }
 
+#[derive(Debug, Archive, Deserialize, Serialize, Clone)]
 pub enum Skybox {
     SolidColor(f32, f32, f32),
     Cubemap(String),
@@ -175,9 +178,9 @@ impl Environment {
             skybox: Skybox::Cubemap(String::from("heaven")),
             dir_light: DirLight {
                 direction: vec3(-0.2, -1.0, -0.3),
-                ambient: vec3(0.25, 0.25, 0.25),
-                diffuse: vec3(0.6, 0.6, 0.5),
-                specular: vec3(1.0, 1.0, 0.7)
+                ambient: vec3(0.3, 0.3, 0.3),
+                diffuse: vec3(0.6, 0.6, 0.6),
+                specular: vec3(0.75, 0.75, 0.75)
             }
         }
     }
@@ -367,6 +370,7 @@ impl Scene {
             skybox_program.uniform_matrix4f32("view", modified_view, gl);
 
             gl.bind_vertex_array(self.skybox_vao);
+            gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_CUBE_MAP, Some(cubemap_texture.inner));
             gl.draw_arrays(glow::TRIANGLES, 0, 36);
 
