@@ -576,7 +576,7 @@ pub mod implement {
     use rfd::FileDialog;
     use winit::event::MouseButton;
 
-    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, save::{data_fix, ArchivedLevelData, LevelData}, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
+    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, save::{data_fix, LevelData}, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
 
     const MATERIAL_FRAME_SIZE: u32 = 100;
 
@@ -997,17 +997,17 @@ pub mod implement {
                             if ui.image_button(input, 1, 1, 98, 36, (0, 0), (1, 1), "evil_pixel") {
                                 if world.editor_data.save_to.is_none() {
                                     world.editor_data.save_to = FileDialog::new()
-                                        .add_filter("level", &["lv"])
+                                        .add_filter("JSON files", &["json"])
                                         .set_directory("/res/levels/")
                                         .save_file();
                                 }
                                 
                                 if let Some(path) = &world.editor_data.save_to {
                                     let save_data = world.save_data();
-                                    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&save_data).unwrap();
+                                    let json_level = serde_json::to_string(&save_data).unwrap();
                                     let mut file = File::create(path);
                                     if let Ok(file) = &mut file {
-                                        file.write_all(&bytes).unwrap();
+                                        file.write_all(json_level.as_bytes()).unwrap();
                                         debug_messages.push("level saved successfully".to_string());
                                     } else {
                                         debug_messages.push("failed to open or create save file".to_string());
@@ -1021,17 +1021,18 @@ pub mod implement {
                         ui.frame(8, 24 + 38 + 8, 100, 38);
                             if ui.image_button(input, 1, 1, 98, 36, (0, 0), (1, 1), "evil_pixel") {
                                 let load_file = FileDialog::new()
-                                    .add_filter("level", &["lv"])
+                                    .add_filter("JSON files", &["json"])
                                     .set_directory("/res/levels/")
                                     .pick_file();
 
                                 if let Some(load_file) = load_file {
                                     let mut file = File::open(&load_file);
                                     if let Ok(file) = &mut file {
-                                        let mut data = Vec::new();
-                                        file.read_to_end(&mut data).expect("Error reading file data");
-                                        let archived = rkyv::access::<ArchivedLevelData, rkyv::rancor::Error>(&data.as_slice()).unwrap();
-                                        let save_data = rkyv::deserialize::<LevelData, rkyv::rancor::Error>(archived).unwrap();
+                                        let mut data = String::new();
+                                        file.read_to_string(&mut data).expect("Error reading file data");
+                                        let save_data = serde_json::from_str(data.as_str()).unwrap();
+                                        // let archived = rkyv::access::<ArchivedLevelData, rkyv::rancor::Error>(&data.as_slice()).unwrap();
+                                        // let save_data = rkyv::deserialize::<LevelData, rkyv::rancor::Error>(archived).unwrap();
                                         //let archived = rkyv::access::<data_fix::ArchivedLevelDataOld, rkyv::rancor::Error>(&data.as_slice()).unwrap();
                                         //let save_data = rkyv::deserialize::<data_fix::LevelDataOld, rkyv::rancor::Error>(archived).unwrap().into_new();
                                         world.load_new = Some(save_data);
@@ -1080,7 +1081,6 @@ pub mod implement {
                                         } else {
                                             world.scene.environment.skybox = crate::render::Skybox::Cubemap(skybox.to_string());
                                             debug_messages.push(format!("loaded skybox {}", skybox));
-                                            // println!("{:?}", world.scene.environment.skybox);
                                         }
                                     } else {
                                         world.scene.environment.skybox = crate::render::Skybox::Cubemap(skybox.to_string());

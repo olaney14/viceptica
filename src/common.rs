@@ -1,4 +1,4 @@
-use cgmath::{Matrix3, Matrix4, Vector3};
+use cgmath::{Matrix, Matrix3, Matrix4, SquareMatrix, Vector3};
 
 pub fn round_to(num: f32, to: f32) -> f32 {
     (num / to).round() * to
@@ -31,4 +31,9 @@ pub fn mat4_remove_translation(mat: Matrix4<f32>) -> Matrix4<f32> {
 
 pub fn vec3_mix(a: Vector3<f32>, b: Vector3<f32>, t: f32) -> Vector3<f32> {
     a * (1.0 - t) + b * t
+}
+
+// https://learnopengl.com/Lighting/Basic-Lighting
+pub fn normal_matrix(mat: Matrix4<f32>) -> Matrix3<f32> {
+    mat4_to_mat3(mat.invert().unwrap().transpose())
 }

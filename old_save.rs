@@ -1,9 +1,9 @@
 use cgmath::{Matrix4, SquareMatrix, Vector3, Zero};
-use serde::{Deserialize, Serialize};
+use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::{collision, component::Component, mesh::{self, MeshBank}, render::{self, DirLight, Environment, Skybox}, shader::ProgramBank, texture::TextureBank, world::{self, Model, World}};
+use crate::{collision, mesh::{self, MeshBank}, render::{self, DirLight, Environment, Skybox}, shader::ProgramBank, texture::TextureBank, world::{self, Model, World}};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Archive, Deserialize, Serialize)]
 pub struct BrushData {
     material: String,
     origin: [f32; 3],
@@ -11,7 +11,7 @@ pub struct BrushData {
     flags: u32
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Archive, Deserialize, Serialize)]
 pub struct DirLightData {
     direction: [f32; 3],
     ambient: [f32; 3],
@@ -19,13 +19,13 @@ pub struct DirLightData {
     specular: [f32; 3]
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Archive, Deserialize, Serialize)]
 pub struct EnvironmentData {
     skybox: render::Skybox,
     dir_light: DirLightData
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Archive, Deserialize, Serialize)]
 pub struct LevelData {
     models: Vec<ModelData>,
     brushes: Vec<BrushData>,
@@ -35,7 +35,7 @@ pub struct LevelData {
     environment: Option<EnvironmentData>
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Archive, Deserialize, Serialize)]
 pub struct MaterialData {
     name: String,
     diffuse: String,
@@ -44,7 +44,7 @@ pub struct MaterialData {
     physical_properties: collision::PhysicalProperties
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Archive, Deserialize, Serialize, Debug)]
 pub enum ModelRenderableData {
     Mesh(String, [[f32; 4]; 4], u32),
     Brush(String, [f32; 3], [f32; 3], u32),
@@ -81,14 +81,14 @@ impl ModelRenderableData {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Archive, Deserialize, Serialize, Debug)]
 pub enum ModelColliderData {
     None,
     Singular { collider: ModelColliderDataSingular },
     Multiple { colliders: Vec<ModelColliderDataSingular> }
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Archive, Deserialize, Serialize, Clone, Debug)]
 pub enum ModelColliderDataSingular {
     Cuboid { offset: [f32; 3], half_extents: [f32; 3] }
 }
@@ -143,13 +143,13 @@ impl ModelColliderDataSingular {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Archive, Deserialize, Serialize, Debug)]
 pub struct PointLightData {
     attenuation: f32,
     color: [f32; 3]
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Archive, Deserialize, Serialize, Debug)]
 pub struct ModelData {
     transform: [[f32; 4]; 4],
     mobile: bool,
@@ -157,9 +157,7 @@ pub struct ModelData {
     solid: bool,
     lights: Vec<([f32; 3], PointLightData)>,
     insert_colliders: ModelColliderData,
-    renderables: Vec<ModelRenderableData>,
-    #[serde(default="Vec::new")]
-    components: Vec<Component>
+    renderables: Vec<ModelRenderableData>
 }
 
 impl ModelData {
@@ -183,8 +181,6 @@ impl ModelData {
             point_light.set_color(light.1.color.into());
             model = model.with_light(world.scene.add_point_light(point_light), light.0.into());
         }
-
-        model.components = self.components.clone();
 
         world.insert_model(model);
     }
@@ -233,8 +229,7 @@ impl World {
                     transform,
                     lights,
                     insert_colliders,
-                    renderables,
-                    components: model.components.clone()
+                    renderables
                 });
             }
         }
@@ -354,7 +349,7 @@ impl World {
 pub mod data_fix {
     use crate::save::*;
 
-    #[derive(Deserialize, Serialize)]
+    #[derive(Archive, Deserialize, Serialize)]
     pub struct LevelDataOld {
         models: Vec<ModelData>,
         brushes: Vec<BrushData>,

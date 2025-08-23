@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use cgmath::{vec3, vec4, AbsDiffEq, ElementWise, EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation, SquareMatrix, Vector3, Zero};
 use glow::{HasContext, NativeVertexArray};
+use parry3d::bounding_volume::BoundingVolume;
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
 use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, component::Component, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, PointLight, Scene}, save::LevelData, shader::ProgramBank, texture::TextureBank};
@@ -124,7 +125,8 @@ pub struct World {
     pub editor_data: EditorModeData,
     pub load_new: Option<LevelData>,
     /// this many frames will be ignored
-    pub freeze: u32
+    pub freeze: u32,
+    pub do_game_logic: bool
 }
 
 pub struct InternalModels {
@@ -162,12 +164,14 @@ pub unsafe fn load_brushes(textures: &mut TextureBank, meshes: &mut MeshBank, sc
 
     scene.load_material_diff_spec_phys("ice", "ice", "ice_specular", PhysicalProperties {
         friction: 0.99,
-        control: 0.05
+        control: 0.05,
+        jump: 1.0
     }, textures, gl);
     meshes.add(Mesh::create_material_cube("ice", gl), "Brush_ice");
     scene.load_material_diff_spec_phys("tar", "tar", "tar_specular", PhysicalProperties {
         friction: 0.25,
-        control: 0.03
+        control: 0.03,
+        jump: 0.1
     }, textures, gl);
     meshes.add(Mesh::create_material_cube("tar", gl), "Brush_tar");
 }
@@ -205,7 +209,8 @@ impl World {
                 show_debug: Vec::new()
             },
             load_new: None,
-            freeze: 0
+            freeze: 0,
+            do_game_logic: true
         };
 
         world.player.collider = world.physical_scene.add_collider(Collider::cuboid(Vector3::zero(), vec3(0.5, 2.0, 0.5), Vector3::zero()));
@@ -362,6 +367,38 @@ impl World {
         self.editor_data.selected_object = None;
     }
 
+    fn pre_insert_model(&mut self, model: &mut Model) {
+        model.insert_colliders(self);
+        model.renderable_indices = self.scene.insert_model(model);
+
+        let mut extents: Option<parry3d::bounding_volume::Aabb> = None;
+
+        for renderable in model.render.iter() {
+            if let Some(aabb) = renderable.get_extents() {
+                if let Some(extents) = &mut extents {
+                    extents.merge(&aabb);
+                } else {
+                    extents = Some(aabb);
+                }
+            }
+        }
+
+        if model.extents.is_none() {
+            model.extents = extents.map(|aabb| {
+                let center = aabb.center();
+                let half_extents = aabb.half_extents();
+                (
+                    vec3(center.x, center.y, center.z),
+                    vec3(half_extents.x, half_extents.y, half_extents.z)
+                )
+            });
+        }
+
+        for i in 0..model.components.len() {
+            Component::on_insert(i, model, self);
+        }
+    }
+
     pub fn insert_model(&mut self, mut model: Model) -> usize {
         for light in model.lights.iter() {
             let position = light.0 + (model.transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
@@ -371,16 +408,14 @@ impl World {
         for i in 0..self.models.len() {
             if self.models[i].is_none() {
                 model.index = Some(i);
-                model.insert_colliders(self);
-                model.renderable_indices = self.scene.insert_model(&model);
+                self.pre_insert_model(&mut model);
                 self.models[i] = Some(model);
                 return i;
             }
         }
 
         model.index = Some(self.models.len());
-        model.insert_colliders(self);
-        model.renderable_indices = self.scene.insert_model(&model);
+        self.pre_insert_model(&mut model);
         self.models.push(Some(model));
         self.models.len() - 1
     }
@@ -537,6 +572,15 @@ impl World {
         }
     }
 
+    /// only use this during component update or any other time the model has been taken
+    pub fn set_model_transform_external(&mut self, model: Model, new_transform: Matrix4<f32>) -> Model {
+        let index = model.index.unwrap();
+        assert!(self.models[index].is_none());
+        self.models[index] = Some(model);
+        self.set_model_transform(index, new_transform);
+        self.models[index].take().unwrap()
+    }
+
     pub fn get_model_transform(&self, index: usize) -> Option<Matrix4<f32>> {
         self.models[index].as_ref().map(|o| o.transform)
     }
@@ -551,8 +595,8 @@ impl World {
     }
 
     fn adorn_arrows_model(&mut self, model: usize) {
-        let (mut position, half_extents) = self.models.get(model).unwrap().as_ref().unwrap().extents.unwrap_or((vec3(0.0, 0.0, 0.0), vec3(0.5, 0.5, 0.5)));
-        position += (self.models.get(model).unwrap().as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+        let (mut position, half_extents) = self.models[model].as_ref().unwrap().extents.unwrap_or((vec3(0.0, 0.0, 0.0), vec3(0.5, 0.5, 0.5)));
+        position += (self.models[model].as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
         let scale = half_extents + vec3(1.0, 1.0, 1.0);
 
         self.position_arrows(position, scale);
@@ -996,6 +1040,18 @@ impl World {
                 self.player.velocity = Vector3::zero()
             }
         }
+
+        for i in 0..self.models.len() {
+            if self.models[i].is_some() {
+                let mut model = self.models[i].take().unwrap();
+
+                for j in 0..model.components.len() {
+                    model = Component::on_update(j, model, self);
+                }
+
+                self.models[i] = Some(model);
+            }
+        }
     }
 
     pub unsafe fn load_basic_meshes(meshes: &mut MeshBank, gl: &glow::Context) {
@@ -1019,6 +1075,25 @@ impl Renderable {
             Self::Mesh(s, _, _) => Some(s),
             Self::Brush(s, _, _, _) => Some(s),
             _ => None
+        }
+    }
+
+    pub fn get_extents(&self) -> Option<parry3d::bounding_volume::Aabb> {
+        match self {
+            Self::Brush(_, pos, extents, _) => {
+                Some(parry3d::bounding_volume::Aabb::from_half_extents(
+                    parry3d::na::Point3::new(pos.x, pos.y, pos.z), 
+                    parry3d::na::Vector3::new(extents.x / 2.0, extents.y / 2.0, extents.z / 2.0)
+                ))
+            },
+            _ => None
+        }
+    }
+
+    pub fn render_as_mesh(&self) -> bool {
+        match self {
+            Self::Mesh(..) | Self::Brush(..) => true,
+            _ => false
         }
     }
 }
@@ -1094,6 +1169,10 @@ impl Model {
         Some(model)
     }
 
+    pub fn origin(&self) -> Vector3<f32> {
+        vec3(self.transform.w.x, self.transform.w.y, self.transform.w.z)
+    }
+
     pub fn mobile(mut self) -> Self {
         self.mobile = true;
         self
@@ -1114,6 +1193,11 @@ impl Model {
                 Renderable::Billboard(_, _, _, flags, _) => *flags |= flags::FULLBRIGHT
             }
         }
+        self
+    }
+
+    pub fn with_component(mut self, component: Component) -> Self {
+        self.components.push(component);
         self
     }
 
@@ -1261,7 +1345,7 @@ impl Player {
 
                 if self.coyote > 0 {
                     if input.get_key_just_pressed(Key::Named(NamedKey::Space)) {
-                        self.velocity.y = self.jump_velocity;
+                        self.velocity.y = self.jump_velocity * self.ground.map(|s| s.jump).unwrap_or(1.0);
                     }
                     self.coyote -= 1;
                 }

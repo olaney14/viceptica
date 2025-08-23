@@ -5,7 +5,7 @@ use glow::{HasContext};
 use glutin::surface::GlSurface;
 use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
-use crate::{collision::RaycastParameters, mesh::{flags, Mesh}, render::CameraControlScheme, world::{Model, PlayerMovementMode, Renderable, World}};
+use crate::{collision::RaycastParameters, component::Component, mesh::{flags, Mesh}, render::CameraControlScheme, world::{Model, PlayerMovementMode, Renderable, World}};
 
 mod ui;
 mod mesh;
@@ -87,11 +87,20 @@ fn main() {
         ]
     ).collider_cuboid(vec3(0.0, 0.0, 0.0), vec3(0.125, 0.125, 0.125)).non_solid();
 
+    let door = Model::new(
+        true,
+        Matrix4::from_translation(vec3(0.0, -2.0, 0.0)),
+        vec![
+            Renderable::Brush("container".to_string(), vec3(0.0, 0.0, 0.0), vec3(2.0, 4.0, 0.25), flags::EXTEND_TEXTURE)
+        ]
+    ).with_component(Component::Door(component::Door::new(4.0, 3.75, 60)));
+
     unsafe { 
         world.scene.init(&mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
         world.editor_data.selection_box_vao = Some(mesh::create_selection_cube(&gl));
         world.insert_model(mobile);
         world.insert_model(billboard);
+        world.insert_model(door);
         world.set_internal_brushes(brushes);
         // world.insert_model(lights);
         world.set_arrows_visible(false);
@@ -131,6 +140,7 @@ fn main() {
                                     world.player.movement = PlayerMovementMode::FollowCamera;
                                     grab_cursor = false;
                                     world.editor_data.active = true;
+                                    world.do_game_logic = false;
                                     ui.play_mode = false;
                                 },
                                 CameraControlScheme::Editor => {
@@ -140,6 +150,7 @@ fn main() {
                                     world.player.movement = PlayerMovementMode::FirstPerson;
                                     grab_cursor = false;
                                     world.editor_data.active = false;
+                                    world.do_game_logic = true;
                                     world.deselect();
                                     ui.play_mode = true;
                                 }

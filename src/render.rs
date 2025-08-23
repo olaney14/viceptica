@@ -3,22 +3,24 @@ use std::{collections::HashMap, sync::LazyLock};
 
 use cgmath::{point3, vec3, vec4, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix, Matrix3, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Transform, Vector3, Zero};
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
-use rkyv::{Archive, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::PhysicalProperties, common, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable}};
+use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, input::Input, mesh::{self, flags, Mesh, MeshBank}, render, shader::{self, Program, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable}};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct RenderData {
     pub flags: u32,
-    pub transform: Matrix4<f32>
+    pub transform: Matrix4<f32>,
+    pub normal_matrix: Matrix3<f32>
 }
 
 static DUMMY_RENDER_DATA_INSTANCED: LazyLock<RenderData> = LazyLock::new(|| {
     RenderData {
         flags: flags::SKIP,
-        transform: Matrix4::identity()
+        transform: Matrix4::identity(),
+        normal_matrix: Matrix3::identity()
     }
 });
 
@@ -26,6 +28,7 @@ static DUMMY_RENDER_DATA_INSTANCED: LazyLock<RenderData> = LazyLock::new(|| {
 pub struct MobileRenderData {
     pub flags: u32,
     pub transform: Matrix4<f32>,
+    pub normal_matrix: Matrix3<f32>,
     pub draw: bool
 }
 
@@ -33,6 +36,7 @@ static DUMMY_RENDER_DATA: LazyLock<MobileRenderData> = LazyLock::new(|| {
     MobileRenderData {
         flags: 0,
         transform: Matrix4::identity(),
+        normal_matrix: Matrix3::identity(),
         draw: false
     }
 });
@@ -160,7 +164,7 @@ impl PointLight {
     }
 }
 
-#[derive(Debug, Archive, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum Skybox {
     SolidColor(f32, f32, f32),
     Cubemap(String),
@@ -402,6 +406,7 @@ impl Scene {
 
             // Set transform and flags individually instead as of part of the instance buffer
             program.uniform_matrix4f32("model", data.transform, gl);
+            program.uniform_matrix3f32("normal_matrix", data.normal_matrix, gl);
             program.uniform_1i32("flags", data.flags as i32, gl);
             program.uniform_1f32("material.shininess", material.shininess, gl);
             gl.active_texture(glow::TEXTURE0);
@@ -443,27 +448,27 @@ impl Scene {
     /// Add a static mesh to the render scene
     fn add_static_mesh(&mut self, mesh: &str, transform: Matrix4<f32>, flags: u32) {
         if let Some(transforms) = self.static_meshes.get_mut(mesh) {
-            transforms.push(RenderData { transform, flags });
+            transforms.push(RenderData { transform, flags, normal_matrix: normal_matrix(transform) });
         } else {
-            self.static_meshes.insert(mesh.to_string(), vec![RenderData { transform, flags }]);
+            self.static_meshes.insert(mesh.to_string(), vec![RenderData { transform, flags, normal_matrix: normal_matrix(transform) }]);
         }
     }
 
     /// Add a mobile mesh to the render scene
     fn add_mobile_mesh(&mut self, mesh: &str, transform: Matrix4<f32>, flags: u32) {
         if let Some(transforms) = self.mobile_meshes.get_mut(mesh) {
-            transforms.push(MobileRenderData { transform, flags, draw: true });
+            transforms.push(MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform) });
         } else {
-            self.mobile_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true }]);
+            self.mobile_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform) }]);
         }
     }
 
     /// Add a foreground mesh to the render scene (no depth test, drawn last)
     fn add_foreground_mesh(&mut self, mesh: &str, transform: Matrix4<f32>, flags: u32) {
         if let Some(transforms) = self.foreground_meshes.get_mut(mesh) {
-            transforms.push(MobileRenderData { transform, flags, draw: true });
+            transforms.push(MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform) });
         } else {
-            self.foreground_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true }]);
+            self.foreground_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform) }]);
         }
     }
 
@@ -597,10 +602,6 @@ impl Scene {
         }
     }
 
-    // fn move_billboard(&mut self, texture: &str, index: usize, new_position: Vector3<f32>) {
-    //     self.billboards.get_mut(texture).unwrap()[index].position = new_position;
-    // }
-
     fn update_model_transform_common(&mut self, renderable: &Renderable, index: usize, model_transform: Matrix4<f32>) {
         match renderable {
             Renderable::Billboard(texture, position, _, _, _) => {
@@ -613,51 +614,90 @@ impl Scene {
     /// Just updates the transform for a mobile mesh,<br>
     /// But when updating a static mesh all other instances of the same type must be rebuffered so be careful
     pub fn update_model_transform(&mut self, model: &Model) {
-        if model.foreground {
-            for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
-                match renderable {
-                    Renderable::Mesh(name, transform, _) => {
-                        self.foreground_meshes.get_mut(name).unwrap()[*index].transform = model.transform * transform;
-                    },
-                    Renderable::Brush(texture, position, size, _) => {
-                        let name = format!("Brush_{}", texture);
-                        let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
-                        self.foreground_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
-                    },
-                    _ => self.update_model_transform_common(renderable, *index, model.transform),
+        for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
+            if renderable.render_as_mesh() {
+                let (mesh_transform, name) = match renderable {
+                    Renderable::Mesh(name, transform, _) => (model.transform * transform, name),
+                    Renderable::Brush(texture, position, size, _) => (
+                        model.transform * Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z),
+                        &format!("Brush_{}", texture)
+                    ),
+                    _ => unreachable!()
+                };
+                if model.mobile || model.foreground {
+                    let meshes = if model.foreground {
+                        self.foreground_meshes.get_mut(name).unwrap()
+                    } else {
+                        self.mobile_meshes.get_mut(name).unwrap()
+                    };
+                    meshes[*index].transform = mesh_transform;
+                    meshes[*index].normal_matrix = normal_matrix(mesh_transform);
+                } else {
+                    let meshes = self.static_meshes.get_mut(name).unwrap();
+                    meshes[*index].transform = mesh_transform;
+                    meshes[*index].normal_matrix = normal_matrix(mesh_transform);
+                    self.mark_static(&name);
                 }
-            }
-        } else if !model.mobile {
-            for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
-                match renderable {
-                    Renderable::Mesh(name, transform, _) => {
-                        self.static_meshes.get_mut(name).unwrap()[*index].transform = model.transform * transform;
-                        self.mark_static(name);
-                    }
-                    Renderable::Brush(texture, position, size, _) => {
-                        let name = format!("Brush_{}", texture);
-                        let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
-                        self.static_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
-                        self.mark_static(&name);
-                    },
-                    _ => self.update_model_transform_common(renderable, *index, model.transform),
-                }
-            }
-        } else {
-            for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
-                match renderable {
-                    Renderable::Mesh(name, transform, _) => {
-                        self.mobile_meshes.get_mut(name).unwrap()[*index].transform = model.transform * transform;
-                    },
-                    Renderable::Brush(texture, position, size, _) => {
-                        let name = format!("Brush_{}", texture);
-                        let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
-                        self.mobile_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
-                    },
-                    _ => self.update_model_transform_common(renderable, *index, model.transform), // we was here
-                }
+            } else {
+                self.update_model_transform_common(renderable, *index, model.transform);
             }
         }
+
+        // if model.foreground {
+        //     for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
+        //         match renderable {
+        //             Renderable::Mesh(name, transform, _) => {
+        //                 let mesh_transform = model.transform * transform;
+        //                 let meshes = self.foreground_meshes.get_mut(name).unwrap();
+        //                 meshes[*index].transform = mesh_transform;
+        //                 meshes[*index].normal_matrix = normal_matrix(mesh_transform);
+        //             },
+        //             Renderable::Brush(texture, position, size, _) => {
+        //                 let name = format!("Brush_{}", texture);
+        //                 let mesh_transform = model.transform * Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
+        //                 let meshes = self.foreground_meshes.get_mut(&name).unwrap();
+        //                 meshes[*index].transform = mesh_transform;
+        //                 meshes[*index].normal_matrix = normal_matrix(mesh_transform);
+        //             },
+        //             _ => self.update_model_transform_common(renderable, *index, model.transform),
+        //         }
+        //     }
+        // } else if !model.mobile {
+        //     for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
+        //         match renderable {
+        //             Renderable::Mesh(name, transform, _) => {
+        //                 let mesh_transform = model.transform * transform;
+        //                 let meshes = self.static_meshes.get_mut(name).unwrap();
+        //                 meshes[*index].transform = mesh_transform;
+        //                 meshes[*index].normal_matrix = normal_matrix(mesh_transform);
+        //                 self.mark_static(name);
+        //             }
+        //             Renderable::Brush(texture, position, size, _) => {
+        //                 let name = format!("Brush_{}", texture);
+        //                 let mesh_transform = model.transform * Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
+        //                 let meshes = self.static_meshes.get_mut(&name).unwrap();
+        //                 meshes[*index].transform = mesh_transform;
+        //                 meshes[*index].normal_matrix = normal_matrix(mesh_transform);
+        //                 self.mark_static(&name);
+        //             },
+        //             _ => self.update_model_transform_common(renderable, *index, model.transform),
+        //         }
+        //     }
+        // } else {
+        //     for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
+        //         match renderable {
+        //             Renderable::Mesh(name, transform, _) => {
+        //                 self.mobile_meshes.get_mut(name).unwrap()[*index].transform = model.transform * transform;
+        //             },
+        //             Renderable::Brush(texture, position, size, _) => {
+        //                 let name = format!("Brush_{}", texture);
+        //                 let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
+        //                 self.mobile_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
+        //             },
+        //             _ => self.update_model_transform_common(renderable, *index, model.transform), // we was here
+        //         }
+        //     }
+        // }
     }
 
     pub fn new() -> Self {

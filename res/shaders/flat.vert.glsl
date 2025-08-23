@@ -12,6 +12,7 @@ out vec3 fragPos;
 
 uniform int flags;
 uniform mat4 model;
+uniform mat3 normal_matrix;
 uniform mat4 view;
 uniform mat4 projection;
 
@@ -22,10 +23,12 @@ void main() {
     vertexColor = aColor;
     uint extend_texture = flags & 1;
     fullbright = flags & 2;
+    // skip is unused for this shader
     cutout = flags & 8;
     
     fragPos = vec3(model * vec4(aPos, 1.0));
-    normal = mat3(transpose(inverse(model))) * aNormal;
+    normal = normal_matrix * aNormal;
+    // normal = mat3(transpose(inverse(model))) * aNormal;
 
     // Texture coordinates
     if (extend_texture > 0) { // Loop texture

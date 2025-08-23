@@ -5,6 +5,7 @@ layout (location = 3) in vec3 aNormal;
 
 layout (location = 4) in uint instanceFlags;
 layout (location = 5) in mat4 instanceMatrix;
+layout (location = 9) in mat3 instanceNormalMatrix;
 
 out vec3 vertexColor;
 out vec2 TexCoord;
@@ -30,13 +31,10 @@ void main() {
     fullbright = instanceFlags & 2;
 
     fragPos = vec3(instanceMatrix * vec4(aPos, 1.0));
-    // move this to the cpu 
-    normal = mat3(transpose(inverse(instanceMatrix))) * aNormal;
+    normal = instanceNormalMatrix * aNormal;
 
     // Texture coordinate
     if (extend_texture > 0) { // Loop texture
-        // this is wrong fix it later
-        // vec3 scaledNormal = normalize((instanceMatrix * vec4(normal, 0.0)).xyz);
         float dotY = abs(dot(vec3(0.0f, 1.0f, 0.0f), normal));
         float dotX = abs(dot(vec3(1.0f, 0.0f, 0.0f), normal));
         float dotZ = abs(dot(vec3(0.0f, 0.0f, 1.0f), normal));

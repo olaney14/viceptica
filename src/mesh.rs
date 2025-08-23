@@ -176,7 +176,8 @@ impl Mesh {
     pub unsafe fn define_instanced_vertex_attributes(gl: &glow::Context) {
         let u32_size = core::mem::size_of::<u32>() as i32;
         let vec4_size = core::mem::size_of::<cgmath::Vector4<f32>>() as i32;
-        let stride = u32_size + 4 * vec4_size;
+        let vec3_size = core::mem::size_of::<cgmath::Vector3<f32>>() as i32;
+        let stride = u32_size + 4 * vec4_size + 3 * vec3_size;
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT);
         gl.vertex_attrib_pointer_i32(VERTEX_ATTRIBUTES_COUNT, 1, glow::UNSIGNED_INT, stride, 0);
 
@@ -189,13 +190,20 @@ impl Mesh {
         gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 3, 4, glow::FLOAT, false, stride, 2 * vec4_size + u32_size);
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 4);
         gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 4, 4, glow::FLOAT, false, stride, 3 * vec4_size + u32_size);
+
+        let offset = 4 * vec4_size + u32_size;
+        // instance normal matrix mat3
+        gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 5);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 5, 3, glow::FLOAT, false, stride, offset);
+        gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 6);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 6, 3, glow::FLOAT, false, stride, 1 * vec3_size + offset);
+        gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 7);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 7, 3, glow::FLOAT, false, stride, 2 * vec3_size + offset);
     
-        // what does this do ????
-        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT, 1);
-        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT + 1, 1);
-        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT + 2, 1);
-        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT + 3, 1);
-        gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT + 4, 1);
+        // make these properties update per index instead of per vertex
+        for i in 0..8 {
+            gl.vertex_attrib_divisor(VERTEX_ATTRIBUTES_COUNT + i, 1);
+        }
     }
 }
 
