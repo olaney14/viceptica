@@ -70,12 +70,12 @@ impl Program {
 
     pub unsafe fn uniform_matrix4f32(&mut self, loc: &str, value: Matrix4<f32>, gl: &glow::Context) {
         let matrix_as_slice: [[f32; 4]; 4] = value.into();
-        gl.uniform_matrix_4_f32_slice(self.get_uniform_location(loc, gl), false, &matrix_as_slice.as_flattened());
+        gl.uniform_matrix_4_f32_slice(self.get_uniform_location(loc, gl), false, matrix_as_slice.as_flattened());
     }
 
     pub unsafe fn uniform_matrix3f32(&mut self, loc: &str, value: Matrix3<f32>, gl: &glow::Context) {
         let matrix_as_slice: [[f32; 3]; 3] = value.into();
-        gl.uniform_matrix_3_f32_slice(self.get_uniform_location(loc, gl), false, &matrix_as_slice.as_flattened());
+        gl.uniform_matrix_3_f32_slice(self.get_uniform_location(loc, gl), false, matrix_as_slice.as_flattened());
     }
 
     pub unsafe fn uniform_1f32(&mut self, loc: &str, value: f32, gl: &glow::Context) {
@@ -108,14 +108,7 @@ impl ProgramBank {
         self.programs.insert(name.to_string(), program);
     }
 
-    pub fn get_inner(&self, name: &str) -> glow::Program {
-        self.programs[name].inner
-    }
-
-    pub fn get(&self, name: &str) -> Option<&Program> {
-        self.programs.get(name)
-    }
-
+    // only get mut because there are no methods on shader that dont capture self as mut
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Program> {
         self.programs.get_mut(name)
     }
@@ -134,6 +127,7 @@ impl ProgramBank {
         let mut frag_src = String::new();
         frag_file.read_to_string(&mut frag_src)?;
 
-        Ok(self.add(name, Program::from_vert_frag(&vertex_src, &frag_src, name, gl)))
+        self.add(name, Program::from_vert_frag(&vertex_src, &frag_src, name, gl));
+        Ok(())
     }
 }

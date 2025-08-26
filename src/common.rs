@@ -1,4 +1,6 @@
-use cgmath::{Matrix, Matrix3, Matrix4, SquareMatrix, Vector3};
+use core::f32;
+
+use cgmath::{vec3, Matrix, Matrix3, Matrix4, SquareMatrix, Vector3};
 
 pub fn round_to(num: f32, to: f32) -> f32 {
     (num / to).round() * to
@@ -33,7 +35,30 @@ pub fn vec3_mix(a: Vector3<f32>, b: Vector3<f32>, t: f32) -> Vector3<f32> {
     a * (1.0 - t) + b * t
 }
 
+pub fn translation(mat: Matrix4<f32>) -> Vector3<f32> {
+    mat.w.xyz()
+}
+
 // https://learnopengl.com/Lighting/Basic-Lighting
 pub fn normal_matrix(mat: Matrix4<f32>) -> Matrix3<f32> {
     mat4_to_mat3(mat.invert().unwrap().transpose())
+}
+
+pub fn compose_extents<I>(extents: I) -> (Vector3<f32>, Vector3<f32>)
+where I: IntoIterator<Item = (Vector3<f32>, Vector3<f32>)> 
+{
+    let mut min = vec3(f32::MAX, f32::MAX, f32::MAX);
+    let mut max = vec3(f32::MIN, f32::MIN, f32::MIN);
+
+    for (center, size) in extents {
+        let min_corner = center - size;
+        let max_corner = center + size;
+        min = min.zip(min_corner, |a, b| a.min(b));
+        max = max.zip(max_corner, |a, b| a.max(b));
+    }
+
+    (
+        (min + max) * 0.5,
+        (max - min) * 0.5
+    )
 }

@@ -1,13 +1,11 @@
 use std::{collections::HashMap, error::Error, path::PathBuf};
 
-use glow::{HasContext, NativeBuffer, NativeVertexArray};
+use glow::{HasContext, NativeVertexArray};
 use itertools::izip;
 
 pub struct Mesh {
     pub vao: NativeVertexArray,
     pub vao_instanced: NativeVertexArray,
-    vbo: NativeBuffer,
-    ebo: NativeBuffer,
     pub indices: usize,
     pub material: String
 }
@@ -35,7 +33,7 @@ impl Mesh {
                 single_index: true,
                 ..Default::default()
             }
-        ).expect(&format!("Failed to load obj file {}", name));
+        ).unwrap_or_else(|_| panic!("Failed to load obj file {}", name));
 
         let mut meshes = Vec::new();
 
@@ -45,9 +43,9 @@ impl Mesh {
             // x, y, z, r, g, b, tx, ty, nx, ny, nz
             let mut mesh_data = Vec::new();
 
-            assert!(mesh.positions.len() > 0, "Mesh had no vertices");
-            assert!(mesh.texcoords.len() > 0, "Mesh had no texcoords");
-            assert!(mesh.normals.len() > 0, "Mesh had no normals");
+            assert!(!mesh.positions.is_empty(), "Mesh had no vertices");
+            assert!(!mesh.texcoords.is_empty(), "Mesh had no texcoords");
+            assert!(!mesh.normals.is_empty(), "Mesh had no normals");
 
             for (position, texture_coord, normal) in izip!(mesh.positions.chunks(3), mesh.texcoords.chunks(2), mesh.normals.chunks(3)) {
                 mesh_data.extend_from_slice(&[
@@ -72,11 +70,11 @@ impl Mesh {
     unsafe fn from_data(vertices: &[VertexComponent], indices: &[IndexComponent], gl: &glow::Context) -> Self {
         let vertices_u8: &[u8] = core::slice::from_raw_parts(
             vertices.as_ptr() as *const u8,
-            vertices.len() * core::mem::size_of::<VertexComponent>()
+            core::mem::size_of_val(vertices)
         );
         let indices_u8: &[u8] = core::slice::from_raw_parts(
             indices.as_ptr() as *const u8,
-            vertices.len() * core::mem::size_of::<IndexComponent>()
+            core::mem::size_of_val(indices)
         );
 
         let vao = gl.create_vertex_array().unwrap();
@@ -104,7 +102,7 @@ impl Mesh {
         // this vao is left unfinished until static mesh data is ready
 
         Self {
-            vao, vbo, ebo,
+            vao,
             vao_instanced,
             indices: indices.len(),
             material: "default".to_string()
@@ -185,7 +183,7 @@ impl Mesh {
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 1);
         gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 1, 4, glow::FLOAT, false, stride, u32_size);
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 2);
-        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 2, 4, glow::FLOAT, false, stride, 1 * vec4_size + u32_size);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 2, 4, glow::FLOAT, false, stride, vec4_size + u32_size);
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 3);
         gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 3, 4, glow::FLOAT, false, stride, 2 * vec4_size + u32_size);
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 4);
@@ -196,7 +194,7 @@ impl Mesh {
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 5);
         gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 5, 3, glow::FLOAT, false, stride, offset);
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 6);
-        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 6, 3, glow::FLOAT, false, stride, 1 * vec3_size + offset);
+        gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 6, 3, glow::FLOAT, false, stride, vec3_size + offset);
         gl.enable_vertex_attrib_array(VERTEX_ATTRIBUTES_COUNT + 7);
         gl.vertex_attrib_pointer_f32(VERTEX_ATTRIBUTES_COUNT + 7, 3, glow::FLOAT, false, stride, 2 * vec3_size + offset);
     

@@ -6,7 +6,7 @@ use glow::{HasContext, NativeVertexArray};
 use parry3d::bounding_volume::BoundingVolume;
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, component::Component, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, PointLight, Scene}, save::LevelData, shader::ProgramBank, texture::TextureBank};
+use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, component::Component, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, Scene}, save::LevelData, shader::ProgramBank, texture::TextureBank};
 
 pub const BRUSH_TEXTURES: [&str; 8] = [
     "concrete",
@@ -42,14 +42,14 @@ const COYOTE: u32 = 3;
 pub enum Selection {
     Brush(usize),
     Model(usize),
-    Multiple(Box<Vec<Selection>>)
+    Multiple(Vec<Selection>)
 }
 
 #[derive(Clone, Copy)]
 pub enum SelectionType {
     Movement,
     Scaling,
-    Rotation
+    // Rotation
 }
 
 #[derive(Clone, Copy)]
@@ -62,7 +62,7 @@ impl SelectionType {
         match self {
             Self::Movement => Self::Scaling,
             Self::Scaling => Self::Movement,
-            _ => Self::Movement
+            // _ => Self::Movement
         }
     }
 }
@@ -87,27 +87,22 @@ pub struct EditorModeData {
     pub light_selected: Option<usize>,
     pub open_light_ui: Option<usize>,
     pub save_to: Option<PathBuf>,
-    pub show_debug: Vec<String>
+    pub show_debug: Vec<String>,
+    pub multiple_selection_offsets: Vec<Vector3<f32>>
 }
 
 impl EditorModeData {
     pub fn get_selected_brush(&self) -> Option<usize> {
-        if let Some(selected) = &self.selected_object {
-            match selected {
-                Selection::Brush(brush) => return Some(*brush),
-                _ => ()
-            }
+        if let Some(Selection::Brush(brush)) = &self.selected_object {
+            return Some(*brush);
         }
 
         None
     }
 
     pub fn get_selected_model(&self) -> Option<usize> {
-        if let Some(selected) = &self.selected_object {
-            match selected {
-                Selection::Model(model) => return Some(*model),
-                _ => ()
-            }
+        if let Some(Selection::Model(model)) = &self.selected_object {
+            return Some(*model);
         }
 
         None
@@ -129,6 +124,7 @@ pub struct World {
     pub do_game_logic: bool
 }
 
+#[derive(Default)]
 pub struct InternalModels {
     pub arrow_px: usize,
     pub arrow_nx: usize,
@@ -147,19 +143,10 @@ pub struct InternalModels {
     pub internal_ids: Vec<usize>
 }
 
-impl Default for InternalModels {
-    fn default() -> Self {
-        Self {
-            arrow_nx: 0, arrow_ny: 0, arrow_nz: 0, arrow_px: 0, arrow_py: 0, arrow_pz: 0, brushes: 0, debug_arrow: 0,
-            box_nx: 0, box_ny: 0, box_nz: 0, box_px: 0, box_py: 0, box_pz: 0, internal_ids: Vec::new()
-        }
-    }
-}
-
 pub unsafe fn load_brushes(textures: &mut TextureBank, meshes: &mut MeshBank, scene: &mut Scene, gl: &glow::Context) {
-    for (_, texture) in BRUSH_TEXTURES.iter().enumerate() {
-        scene.load_material_diff_spec(&texture, &texture, &format!("{}_specular", texture), textures, gl);
-        meshes.add(Mesh::create_material_cube(&texture, gl), &format!("Brush_{}", texture));
+    for texture in BRUSH_TEXTURES.iter() {
+        scene.load_material_diff_spec(texture, texture, &format!("{}_specular", texture), textures, gl);
+        meshes.add(Mesh::create_material_cube(texture, gl), &format!("Brush_{}", texture));
     }
 
     scene.load_material_diff_spec_phys("ice", "ice", "ice_specular", PhysicalProperties {
@@ -206,7 +193,8 @@ impl World {
                 light_selected: None,
                 open_light_ui: None,
                 save_to: None,
-                show_debug: Vec::new()
+                show_debug: Vec::new(),
+                multiple_selection_offsets: Vec::new()
             },
             load_new: None,
             freeze: 0,
@@ -220,9 +208,9 @@ impl World {
 
     pub fn init(&mut self, meshes: &mut MeshBank, gl: &glow::Context) {
         meshes.load_from_obj("arrow", gl);
-        meshes.load_from_obj_vcolor("arrow", "arrowred", 1.0, 0.0, 0.0, &gl);
-        meshes.load_from_obj_vcolor("arrow", "arrowgreen", 0.0, 1.0, 0.0, &gl);
-        meshes.load_from_obj_vcolor("arrow", "arrowblue", 0.0, 0.0, 1.0, &gl);
+        meshes.load_from_obj_vcolor("arrow", "arrowred", 1.0, 0.0, 0.0, gl);
+        meshes.load_from_obj_vcolor("arrow", "arrowgreen", 0.0, 1.0, 0.0, gl);
+        meshes.load_from_obj_vcolor("arrow", "arrowblue", 0.0, 0.0, 1.0, gl);
         unsafe { 
             meshes.add(Mesh::create_colored_cube(1.0, 0.0, 0.0, gl), "cubered");
             meshes.add(Mesh::create_colored_cube(0.0, 1.0, 0.0, gl), "cubegreen");
@@ -230,14 +218,14 @@ impl World {
         }
 
         // Collider is slightly larger than the arrow to make them less annoying to click
-        self.internal.arrow_px = self.insert_model(Model::from_loaded_file("arrowred", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0).non_solid());
-        self.internal.arrow_py = self.insert_model(Model::from_loaded_file("arrowblue", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0).non_solid());
-        self.internal.arrow_pz = self.insert_model(Model::from_loaded_file("arrowgreen", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, 0.15), vec3(0.375, 0.375, 1.75) / 2.0).non_solid());
-        self.internal.arrow_nx = self.insert_model(Model::from_loaded_file("arrowred", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(-0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0).non_solid());
-        self.internal.arrow_ny = self.insert_model(Model::from_loaded_file("arrowblue", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, -0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0).non_solid());
-        self.internal.arrow_nz = self.insert_model(Model::from_loaded_file("arrowgreen", &meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, -0.15), vec3(0.375, 0.375, 1.75) / 2.0).non_solid());
+        self.internal.arrow_px = self.insert_model(Model::from_loaded_file("arrowred", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0).non_solid());
+        self.internal.arrow_py = self.insert_model(Model::from_loaded_file("arrowblue", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0).non_solid());
+        self.internal.arrow_pz = self.insert_model(Model::from_loaded_file("arrowgreen", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, 0.15), vec3(0.375, 0.375, 1.75) / 2.0).non_solid());
+        self.internal.arrow_nx = self.insert_model(Model::from_loaded_file("arrowred", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(-0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0).non_solid());
+        self.internal.arrow_ny = self.insert_model(Model::from_loaded_file("arrowblue", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, -0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0).non_solid());
+        self.internal.arrow_nz = self.insert_model(Model::from_loaded_file("arrowgreen", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, -0.15), vec3(0.375, 0.375, 1.75) / 2.0).non_solid());
         self.internal.brushes = self.insert_model(Model::new(false, Matrix4::identity(), Vec::new()));
-        self.internal.debug_arrow = self.insert_model(Model::from_loaded_file("arrow", &meshes).unwrap().fullbright().mobile());
+        self.internal.debug_arrow = self.insert_model(Model::from_loaded_file("arrow", meshes).unwrap().fullbright().mobile());
         self.internal.box_px = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
         self.internal.box_nx = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
         self.internal.box_py = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
@@ -255,7 +243,7 @@ impl World {
     }
 
     /// set up editor data for movement/scaling and handle switching
-    fn select_brush(&mut self, brush: usize) {
+    pub fn select_brush(&mut self, brush: usize) {
         if let Some(current) = self.editor_data.get_selected_brush() {
             if current == brush {
                 match self.editor_data.selection_type {
@@ -269,7 +257,7 @@ impl World {
                         self.set_boxes_visible(false);
                         self.move_boxes_far();
                     },
-                    _ => ()
+                    // _ => ()
                 } 
                 
                 self.editor_data.selection_type = self.editor_data.selection_type.cycle();
@@ -288,10 +276,10 @@ impl World {
     }
 
     // deduplicate these two somehow?
-    fn select_model(&mut self, model: usize) {
+    pub fn select_model(&mut self, model: usize) {
         if !self.models[model].as_ref().unwrap().lights.is_empty() {
             self.editor_data.light_selected = Some(self.models[model].as_ref().unwrap().lights[0].1);
-            self.editor_data.open_light_ui = self.editor_data.light_selected.clone();
+            self.editor_data.open_light_ui = self.editor_data.light_selected;
         } else {
             self.editor_data.light_selected = None;
         }
@@ -311,25 +299,98 @@ impl World {
         }
     }
 
-    fn can_be_selected(&mut self, model: usize) -> bool {
+    pub fn select_or_append_model(&mut self, model: usize) {
+        if self.editor_data.selected_object.is_none() {
+            self.select_model(model);
+        } else {
+            match self.editor_data.selected_object.as_mut().unwrap() {
+                Selection::Model(_) | Selection::Brush(_) => {
+                    self.editor_data.selected_object = Some(Selection::Multiple(vec![
+                        self.editor_data.selected_object.take().unwrap(),
+                        Selection::Model(model)
+                    ]));
+                },
+                Selection::Multiple(selected) => {
+                    selected.push(Selection::Model(model));
+                }
+            }
+            self.editor_data.light_selected = None;
+            self.set_arrows_visible(true);
+        }
+    }
+
+    pub fn select_or_append_brush(&mut self, brush: usize) {
+        if self.editor_data.selected_object.is_none() {
+            self.select_brush(brush);
+        } else {
+            match self.editor_data.selected_object.as_mut().unwrap() {
+                Selection::Model(_) | Selection::Brush(_) => {
+                    self.editor_data.selected_object = Some(Selection::Multiple(vec![
+                        self.editor_data.selected_object.take().unwrap(),
+                        Selection::Brush(brush)
+                    ]));
+                },
+                Selection::Multiple(selected) => {
+                    selected.push(Selection::Brush(brush));
+                }
+            }
+            self.editor_data.light_selected = None;
+        }
+    }
+
+    fn can_be_selected(&self, model: usize) -> bool {
         !self.internal.internal_ids.contains(&model)
     }
 
-    pub fn model_clicked(&mut self, result: RaycastResult) {
-        if self.editor_data.active {
-            if let Some(model) = result.model {
-                if let Some(renderable) = result.renderable {
-                    if model == self.internal.brushes {
-                        self.set_arrows_visible(true);
-                        self.select_brush(renderable);
+    fn get_models_or_brushes_within_rect(&self, x0: i32, y0: i32, x1: i32, y1: i32, window_width: u32, window_height: u32, brushes: bool) -> Vec<usize> {
+        let to_clip = self.scene.camera.projection * self.scene.camera.view;
+        let mut models_in_box = Vec::new();
+        let x0f =  2.0 * ((x0.min(x1) as f32 / window_width as f32) - 0.5);
+        let y0f = -2.0 * ((y0.max(y1) as f32 / window_height as f32) - 0.5);
+        let x1f =  2.0 * ((x0.max(x1) as f32 / window_width as f32) - 0.5);
+        let y1f = -2.0 * ((y0.min(y1) as f32 / window_height as f32) - 0.5);
+
+        if brushes {
+            for (i, brush) in self.models[self.internal.brushes].as_ref().unwrap().render.iter().enumerate() {
+                if let Renderable::Brush(_, pos, size, _) = brush {
+                    let pos = vec4(pos.x, pos.y, pos.z, 1.0);
+                    let clip = to_clip * pos;
+                    let ndc = clip.truncate() / clip.w;
+                    if ndc.x > x0f && ndc.x < x1f && ndc.y > y0f && ndc.y < y1f && ndc.z < 1.0 {
+                        models_in_box.push(i);
                     }
                 }
-
-                if self.can_be_selected(model) {
-                    self.set_arrows_visible(true);
-                    self.select_model(model);
+            }
+        } else {
+            for model in self.models.iter() {
+                if let Some(model) = model {
+                    if self.can_be_selected(model.index.unwrap()) {
+                        let pos = common::translation(model.transform);
+                        let pos = vec4(pos.x, pos.y, pos.z, 1.0);
+                        let clip = to_clip * pos;
+                        let ndc = clip.truncate() / clip.w;
+                        if ndc.x > x0f && ndc.x < x1f && ndc.y > y0f && ndc.y < y1f && ndc.z < 1.0 {
+                            models_in_box.push(model.index.unwrap());
+                        }
+                    }
                 }
+            }
+        }
 
+        models_in_box
+    }
+
+    pub fn get_models_within_rect(&self, x0: i32, y0: i32, x1: i32, y1: i32, window_width: u32, window_height: u32) -> Vec<usize> {
+        self.get_models_or_brushes_within_rect(x0, y0, x1, y1, window_width, window_height, false)
+    }
+
+    pub fn get_brushes_within_rect(&self, x0: i32, y0: i32, x1: i32, y1: i32, window_width: u32, window_height: u32) -> Vec<usize> {
+        self.get_models_or_brushes_within_rect(x0, y0, x1, y1, window_width, window_height, true)
+    }
+
+    pub fn model_pressed(&mut self, result: RaycastResult) {
+        if self.editor_data.active {
+            if let Some(model) = result.model {
                 if model == self.internal.arrow_nx || model == self.internal.arrow_px || model == self.internal.box_nx || model == self.internal.box_px {
                     self.editor_data.drag_axis = Some(DragAxis::X);
                     if self.scene.camera.direction.dot(Vector3::unit_y()).abs() > self.scene.camera.direction.dot(Vector3::unit_z()).abs() {
@@ -357,6 +418,32 @@ impl World {
                     self.editor_data.drag_object_sign = Some(true);
                 } else if model == self.internal.arrow_nx || model == self.internal.arrow_ny || model == self.internal.arrow_nz || model == self.internal.box_nx || model == self.internal.box_ny || model == self.internal.box_nz {
                     self.editor_data.drag_object_sign = Some(false);
+                }
+            }
+        }
+    }
+
+    pub fn model_released(&mut self, result: RaycastResult, shift_pressed: bool) {
+        if self.editor_data.active {
+            if let Some(model) = result.model {
+                if let Some(renderable) = result.renderable {
+                    if model == self.internal.brushes {
+                        if shift_pressed {
+                            self.select_or_append_brush(renderable);
+                        } else {
+                            self.select_brush(renderable);
+                        }
+                        self.set_arrows_visible(true);
+                    }
+                }
+
+                if self.can_be_selected(model) {
+                    if shift_pressed {
+                        self.select_or_append_model(model);
+                    } else {
+                        self.select_model(model);
+                    }
+                    self.set_arrows_visible(true);
                 }
             }
         }
@@ -445,21 +532,19 @@ impl World {
     /// This also removes the point light from the model
     pub fn remove_point_light(&mut self, light: usize) {    
         let mut removed = false;
-        for model in self.models.iter_mut() {
-            if let Some(model) = model {
-                let mut light_index = None;
-                for (_, index) in model.lights.iter_mut() {
-                    if *index > light {
-                        *index -= 1;
-                    } else if *index == light {
-                        light_index = Some(*index);
-                    }
+        for model in self.models.iter_mut().flatten() {
+            let mut light_index = None;
+            for (_, index) in model.lights.iter_mut() {
+                if *index > light {
+                    *index -= 1;
+                } else if *index == light {
+                    light_index = Some(*index);
                 }
+            }
 
-                if let Some(model_light) = light_index {
-                    model.lights.remove(model_light);
-                    removed = true;
-                }
+            if let Some(model_light) = light_index {
+                model.lights.remove(model_light);
+                removed = true;
             }
         }
 
@@ -525,7 +610,7 @@ impl World {
             
             //self.scene.amend_model(self.models[self.internal.brushes].as_mut().unwrap(), new_brush);
             self.remove_brush(brush_index);
-            return self.insert_brush(new_brush);
+            self.insert_brush(new_brush)
         } else {
             panic!("Non-brush in internal brush model");
         }
@@ -547,8 +632,7 @@ impl World {
                 collider.model = Some(self.internal.brushes);
                 model.colliders.push(Some(self.physical_scene.add_collider(collider)));
                 self.scene.amend_model(model, brush);
-                // println!("{:?}", model.render);
-                return model.render.len() - 1;
+                model.render.len() - 1
             },
             _ => panic!("thats not a brush")
         }
@@ -614,6 +698,47 @@ impl World {
         self.editor_data.selection_box_visible = true;
         self.editor_data.selection_box_pos = position;
         self.editor_data.selection_box_scale = scale - vec3(1.0, 1.0, 1.0);
+    }
+
+    fn adorn_arrows_multiple(&mut self, multiple: &Vec<Selection>) {
+        let (position, half_extents) = common::compose_extents(
+            multiple.iter().map(|a| match a {
+                Selection::Brush(index) => { 
+                    let extents = self.get_brush_adornment_transform(*index);
+                    // extents.0 += if let Renderable::Brush(_, pos, _, _) = self.models[self.internal.brushes].as_ref().unwrap().render[*index] { pos } else { unreachable!() };
+                    (extents.0, extents.1 - vec3(1.0, 1.0, 1.0)) 
+                },
+                Selection::Model(index) => {
+                    let position = common::translation(self.models[*index].as_ref().unwrap().transform);
+                    let mut extents = self.models[*index].as_ref().unwrap().extents.unwrap_or((Vector3::zero(), vec3(0.5, 0.5, 0.5)));
+                    extents.0 += position;
+                    extents
+                },
+                _ => panic!("multiple selection within multiple selection")
+            })
+        );
+        let scale = half_extents + vec3(1.0, 1.0, 1.0);
+
+        self.position_arrows(position, scale);
+
+        self.editor_data.selection_box_visible = true;
+        self.editor_data.selection_box_pos = position;
+        self.editor_data.selection_box_scale = half_extents;
+
+        self.editor_data.multiple_selection_offsets.clear();
+        for selection in multiple {
+            self.editor_data.multiple_selection_offsets.push(
+                match selection {
+                    Selection::Brush(index) => {
+                        if let Renderable::Brush(_, pos, _, _) = self.models[self.internal.brushes].as_ref().unwrap().render[*index] { pos - position } else { unreachable!() }
+                    },
+                    Selection::Model(model) => {
+                        common::translation(self.models[*model].as_ref().unwrap().transform) - position
+                    },
+                    Selection::Multiple(_) => unreachable!()
+                }
+            );
+        }
     }
 
     fn adorn_boxes_brush(&mut self, brush: usize) {
@@ -736,6 +861,21 @@ impl World {
         (self.scene.camera.pos.to_vec(), ray_world.xyz().normalize())
     }
 
+    fn transform_selection(&mut self, new_origin: Vector3<f32>, selection: &Selection) {
+        match selection {
+            Selection::Brush(brush) => {
+                self.set_brush_origin(*brush, new_origin);
+            },
+            Selection::Model(model) => {
+                let transform = self.get_model_transform(*model).unwrap();
+                let current_origin = (transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+                let new_transform = Matrix4::from_translation(new_origin - current_origin) * transform;
+                self.set_model_transform(*model, new_transform);
+            },
+            Selection::Multiple(_) => unreachable!()
+        }
+    }
+
     fn drag_along_axis(&mut self, model_origin: Vector3<f32>, mouse_ray: (Vector3<f32>, Vector3<f32>), axis: Vector3<f32>, plane: Vector3<f32>, axis_func: fn(Vector3<f32>) -> f32) {
         let d = -model_origin.dot(plane); // ????
 
@@ -752,18 +892,18 @@ impl World {
                         self.editor_data.drag_distance = Some(along_axis);
                         let new_origin = self.editor_data.drag_object_origin.unwrap() + axis * along_axis;
 
-                        match self.editor_data.selected_object.as_ref().unwrap() {
-                            Selection::Brush(brush) => {
-                                self.set_brush_origin(*brush, new_origin);
-                            },
-                            Selection::Model(model) => {
-                                let transform = self.get_model_transform(*model).unwrap();
-                                let current_origin = (transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
-                                let new_transform = Matrix4::from_translation(new_origin - current_origin) * transform;
-                                self.set_model_transform(*model, new_transform);
-                            },
-                            _ => todo!()
+                        let selection = self.editor_data.selected_object.take().unwrap();
+
+                        match &selection {
+                            Selection::Brush(_) | Selection::Model(_) => self.transform_selection(new_origin, &selection),
+                            Selection::Multiple(multiple) => {
+                                for (i, selection) in multiple.iter().enumerate() {
+                                    self.transform_selection(new_origin + self.editor_data.multiple_selection_offsets[i], selection);
+                                }
+                            }
                         }
+
+                        self.editor_data.selected_object = Some(selection);
                     }
                 },
                 None => { 
@@ -837,8 +977,8 @@ impl World {
         let mut new_model = Model {
             transform: model.transform,
             solid: model.solid,
-            foreground: model.foreground,
-            extents: model.extents.clone(),
+            foreground: model.foreground, 
+            extents: model.extents,
             index: None,
             insert_collider: model.insert_collider.clone(),
             colliders: Vec::new(),
@@ -867,13 +1007,11 @@ impl World {
         brushes.colliders.remove(brush_index);
 
         // This is only local to the brushes model
-        for collider in brushes.colliders.iter() {
-            if let Some(collider) = collider {
-                if let Some(collider) = self.physical_scene.colliders.get_mut(*collider).unwrap() {
-                    if let Some(ref mut renderable) = collider.renderable {
-                        if *renderable > brush_index {
-                            *renderable -= 1;
-                        }
+        for collider in brushes.colliders.iter().flatten() {
+            if let Some(collider) = self.physical_scene.colliders.get_mut(*collider).unwrap() {
+                if let Some(ref mut renderable) = collider.renderable {
+                    if *renderable > brush_index {
+                        *renderable -= 1;
                     }
                 }
             }
@@ -906,7 +1044,7 @@ impl World {
                             SelectionType::Scaling => {
                                 self.adorn_boxes_brush(*brush);
                             },
-                            _ => ()
+                            // _ => ()
                         }
                     }
                 },
@@ -918,7 +1056,14 @@ impl World {
                         _ => ()
                     }
                 },
-                _ => todo!()
+                Selection::Multiple(multiple) => {
+                    match self.editor_data.selection_type {
+                        SelectionType::Movement => {
+                            self.adorn_arrows_multiple(multiple);
+                        },
+                        _ => ()
+                    }
+                }
             }
 
             // Delete selected
@@ -934,7 +1079,17 @@ impl World {
                         self.deselect();
                         selection = None;
                     },
-                    _ => todo!()
+                    Selection::Multiple(multiple) => {
+                        for multiple_selection in multiple {
+                            match multiple_selection {
+                                Selection::Brush(brush) => self.remove_brush(*brush),
+                                Selection::Model(model) => self.remove_model(*model).unwrap(),
+                                Selection::Multiple(_) => unreachable!()
+                            }
+                        }
+                        self.deselect();
+                        selection = None;
+                    }
                 }
             }
         }
@@ -945,8 +1100,11 @@ impl World {
 
         // Duplicate
         if input.get_key_pressed(Key::Named(NamedKey::Control)) && input.get_key_just_pressed(Key::Character("d".into())) {
-            if let Some(selection) = &self.editor_data.selected_object {
-                match selection {
+            if self.editor_data.selected_object.is_some() {
+                let selection = self.editor_data.selected_object.take().unwrap();
+
+                let mut new_selection: Option<Vec<Selection>> = None;
+                match &selection {
                     Selection::Brush(brush_index) => {
                         let brush = self.models.get(self.internal.brushes).unwrap().as_ref().unwrap().render[*brush_index].clone();
                         let index = self.insert_brush(brush);
@@ -956,8 +1114,40 @@ impl World {
                         let duplicate = self.duplicate_model(*model);
                         self.select_model(duplicate);
                     },
-                    _ => todo!()
+                    Selection::Multiple(multiple) => {
+                        if !multiple.is_empty() {
+                            new_selection = Some(Vec::new());
+                        }
+                        for selection in multiple {
+                            match selection {
+                                Selection::Brush(brush) => {
+                                    let brush = self.models[self.internal.brushes].as_ref().unwrap().render[*brush].clone();
+                                    let index = self.insert_brush(brush);
+                                    new_selection.as_mut().unwrap().push(Selection::Brush(index));
+                                },
+                                Selection::Model(model) => {
+                                    let duplicate = self.duplicate_model(*model);
+                                    new_selection.as_mut().unwrap().push(Selection::Model(duplicate));
+                                },
+                                Selection::Multiple(_) => unreachable!()
+                            }
+                        }
+                    }
                 }
+
+                if let Some(new) = new_selection {
+                    self.deselect();
+                    for selection in new {
+                        match selection {
+                            Selection::Brush(brush) => self.select_or_append_brush(brush),
+                            Selection::Model(model) => self.select_or_append_model(model),
+                            Selection::Multiple(_) => unreachable!()
+                        }
+                        self.set_arrows_visible(true);
+                    }
+                }
+
+                self.editor_data.selected_object = Some(selection);
             }
         }
 
@@ -974,37 +1164,42 @@ impl World {
         // Do a ray-plane intersection test and take the component of the vector from the original click to the current click that lies on the proper axis
         // The plane is the normal * sign(d), d is the distance from the origin to the object along the respective axis
         if let Some(drag) = &self.editor_data.drag_axis {
-            assert!(self.editor_data.selected_object.is_some(), "Drag started without a selection");
-            let (model_origin, model_scale) = match self.editor_data.selected_object.as_ref().unwrap() {
-                Selection::Brush(brush) => {
-                    // small performance improvement possible
-                    let (pos, scale) = self.get_brush_adornment_transform(*brush);
-                    (pos, (scale - vec3(1.0, 1.0, 1.0)) * 2.0)
-                },
-                Selection::Model(model) => {
-                    // model_scale goes unused for now
-                    ((self.models.get(*model).unwrap().as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz(), Vector3::zero())
-                },
-                _ => todo!()
-            };
+            if self.editor_data.selected_object.is_some() {
+                let (model_origin, model_scale) = match self.editor_data.selected_object.as_ref().unwrap() {
+                    Selection::Brush(brush) => {
+                        // small performance improvement possible
+                        let (pos, scale) = self.get_brush_adornment_transform(*brush);
+                        (pos, (scale - vec3(1.0, 1.0, 1.0)) * 2.0)
+                    },
+                    Selection::Model(model) => {
+                        // model_scale goes unused for now
+                        ((self.models.get(*model).unwrap().as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz(), Vector3::zero())
+                    },
+                    Selection::Multiple(_) => {
+                        (self.editor_data.selection_box_pos, self.editor_data.selection_box_scale)
+                    }
+                };
 
-            // t < 0, intersects behind ray. t == 0, ray is perpendicular 
-            match self.editor_data.selection_type {
-                SelectionType::Movement => {
-                    match drag {
-                        DragAxis::X => self.drag_along_axis(model_origin, mouse_ray, Vector3::unit_x(), self.editor_data.drag_plane.unwrap(), |v| v.x),
-                        DragAxis::Y => self.drag_along_axis(model_origin, mouse_ray, Vector3::unit_y(), self.editor_data.drag_plane.unwrap(), |v| v.y),
-                        DragAxis::Z => self.drag_along_axis(model_origin, mouse_ray, Vector3::unit_z(), self.editor_data.drag_plane.unwrap(), |v| v.z),
-                    }
-                },
-                SelectionType::Scaling => {
-                    match drag {
-                        DragAxis::X => self.scale_along_axis(model_origin, model_scale, mouse_ray, Vector3::unit_x(), self.editor_data.drag_plane.unwrap(), |v| v.x),
-                        DragAxis::Y => self.scale_along_axis(model_origin, model_scale, mouse_ray, Vector3::unit_y(), self.editor_data.drag_plane.unwrap(), |v| v.y),
-                        DragAxis::Z => self.scale_along_axis(model_origin, model_scale, mouse_ray, Vector3::unit_z(), self.editor_data.drag_plane.unwrap(), |v| v.z),
-                    }
-                },
-                _ => ()
+                // t < 0, intersects behind ray. t == 0, ray is perpendicular 
+                match self.editor_data.selection_type {
+                    SelectionType::Movement => {
+                        match drag {
+                            DragAxis::X => self.drag_along_axis(model_origin, mouse_ray, Vector3::unit_x(), self.editor_data.drag_plane.unwrap(), |v| v.x),
+                            DragAxis::Y => self.drag_along_axis(model_origin, mouse_ray, Vector3::unit_y(), self.editor_data.drag_plane.unwrap(), |v| v.y),
+                            DragAxis::Z => self.drag_along_axis(model_origin, mouse_ray, Vector3::unit_z(), self.editor_data.drag_plane.unwrap(), |v| v.z),
+                        }
+                    },
+                    SelectionType::Scaling => {
+                        match drag {
+                            DragAxis::X => self.scale_along_axis(model_origin, model_scale, mouse_ray, Vector3::unit_x(), self.editor_data.drag_plane.unwrap(), |v| v.x),
+                            DragAxis::Y => self.scale_along_axis(model_origin, model_scale, mouse_ray, Vector3::unit_y(), self.editor_data.drag_plane.unwrap(), |v| v.y),
+                            DragAxis::Z => self.scale_along_axis(model_origin, model_scale, mouse_ray, Vector3::unit_z(), self.editor_data.drag_plane.unwrap(), |v| v.z),
+                        }
+                    },
+                    // _ => ()
+                }
+            } else {
+                eprintln!("Drag started without a selection");
             }
         }
 
@@ -1091,10 +1286,7 @@ impl Renderable {
     }
 
     pub fn render_as_mesh(&self) -> bool {
-        match self {
-            Self::Mesh(..) | Self::Brush(..) => true,
-            _ => false
-        }
+        matches!(self, Self::Mesh(..) | Self::Brush(..))
     }
 }
 
@@ -1144,7 +1336,7 @@ impl Model {
     pub fn from_loaded_file(file: &str, meshes: &MeshBank) -> Option<Self> {
         let mut current_index = 0;
 
-        if meshes.get(&format!("File_{}0", file)).is_none() { return None; }
+        meshes.get(&format!("File_{}0", file))?;
 
         let mut model = Self {
             mobile: false,
@@ -1161,7 +1353,7 @@ impl Model {
             components: Vec::new()
         };
 
-        while let Some(_) = meshes.get(&format!("File_{}{}", file, current_index)) {
+        while meshes.get(&format!("File_{}{}", file, current_index)).is_some() {
             model.render.push(Renderable::Mesh(format!("File_{}{}", file, current_index), Matrix4::identity(), 0));
             current_index += 1;
         }

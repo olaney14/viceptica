@@ -21,7 +21,7 @@ impl PhysicalScene {
 
     pub fn add_collider(&mut self, collider: Collider) -> usize {
         for (i, maybe_empty) in self.colliders.iter_mut().enumerate() {
-            if let None = maybe_empty {
+            if maybe_empty.is_none() {
                 *maybe_empty = Some(collider);
                 return i;
             }
@@ -73,7 +73,7 @@ impl PhysicalScene {
 
                         if !skip_resolve {
                             let projected = final_velocity.project_on(hit_normal);
-                            final_velocity = final_velocity - projected;
+                            final_velocity -= projected;
                             normals.push(hit_normal);
                             materials.push(self.colliders.get(i).unwrap().as_ref().unwrap().physical_properties);
 
@@ -230,7 +230,7 @@ impl Model {
     }
 
     pub fn insert_colliders(&mut self, world: &mut World) {
-        assert!(self.colliders.len() == 0, "Colliders inserted more than once");
+        assert!(self.colliders.is_empty(), "Colliders inserted more than once");
         let model_position: Vector3<f32> = (self.transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
 
         for (i, renderable) in self.render.iter().enumerate() {
@@ -284,19 +284,16 @@ impl World {
         let model_position: Vector3<f32> = (self.models[model].as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
 
         for i in 0..self.models[model].as_ref().unwrap().render.len() {
-            match &self.models[model].as_ref().unwrap().render[i] {
-                Renderable::Brush(material, position, size, _) => {
-                    let properties = self.scene.materials.get(material).unwrap().physical_properties;
-                    let mut collider = Collider::cuboid(*position + model_position, *size, Vector3::zero());
-                    collider.physical_properties = properties;
-                    collider.renderable = Some(i);
-                    collider.model = Some(model);
-                    collider.foreground = self.models[model].as_ref().unwrap().foreground;
-                    collider.solid = self.models[model].as_ref().unwrap().solid;
-                    let collider_index = self.models[model].as_ref().unwrap().colliders[i].unwrap();
-                    self.physical_scene.colliders[collider_index] = Some(collider);
-                },
-                _ => ()
+            if let Renderable::Brush(material, position, size, _) = &self.models[model].as_ref().unwrap().render[i] {
+                let properties = self.scene.materials.get(material).unwrap().physical_properties;
+                let mut collider = Collider::cuboid(*position + model_position, *size, Vector3::zero());
+                collider.physical_properties = properties;
+                collider.renderable = Some(i);
+                collider.model = Some(model);
+                collider.foreground = self.models[model].as_ref().unwrap().foreground;
+                collider.solid = self.models[model].as_ref().unwrap().solid;
+                let collider_index = self.models[model].as_ref().unwrap().colliders[i].unwrap();
+                self.physical_scene.colliders[collider_index] = Some(collider);
             }
         }
 

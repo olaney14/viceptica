@@ -1,12 +1,12 @@
 use core::f32;
 use std::{collections::HashMap, sync::LazyLock};
 
-use cgmath::{point3, vec3, vec4, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix, Matrix3, Matrix4, Point3, Quaternion, Rotation, SquareMatrix, Transform, Vector3, Zero};
+use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, SquareMatrix, Transform, Vector3, Zero};
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
 use serde::{Deserialize, Serialize};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, input::Input, mesh::{self, flags, Mesh, MeshBank}, render, shader::{self, Program, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable}};
+use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable}};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -222,7 +222,7 @@ impl Scene {
         programs.load_by_name_vf("lines", gl).unwrap();
         programs.load_by_name_vf("skybox", gl).unwrap();
         self.add_default_materials();
-        world::load_brushes(textures, meshes, self, &gl);
+        world::load_brushes(textures, meshes, self, gl);
         // billboards
         meshes.add(Mesh::create_square(1.0, 1.0, 1.0, gl), "quad");
         // textures.load_cubemap_by_name("field", gl).unwrap();
@@ -396,9 +396,9 @@ impl Scene {
     }
 
     #[inline]
-    unsafe fn render_individual(&self, data: &Vec<MobileRenderData>, name: &String, meshes: &MeshBank, textures: &TextureBank, program: &mut shader::Program, gl: &glow::Context) {
-        let mesh = meshes.get(name).expect(format!("Missing mesh \"{}\"", name).as_str());
-        let material = self.materials.get(&mesh.material).expect(format!("Missing material \"{}\"", mesh.material).as_str());
+    unsafe fn render_individual(&self, data: &[MobileRenderData], name: &String, meshes: &MeshBank, textures: &TextureBank, program: &mut shader::Program, gl: &glow::Context) {
+        let mesh = meshes.get(name).unwrap_or_else(|| panic!("Missing mesh \"{}\"", name));
+        let material = self.materials.get(&mesh.material).unwrap_or_else(|| panic!("Missing material \"{}\"", mesh.material));
 
         for data in data.iter() {
             // Skip drawing if this is set as invisible
@@ -527,14 +527,14 @@ impl Scene {
             Renderable::Mesh(ref name, transform, flags) => {
                 let mut renderable_indices = Vec::new();
                 self.insert_mesh_from_model(name, &transform, flags, model, &mut renderable_indices);
-                model.renderable_indices.extend(renderable_indices.drain(..));
+                model.renderable_indices.append(&mut renderable_indices);
             },
             Renderable::Brush(ref material, position, size, flags) => {
                 let name = format!("Brush_{}", material);
                 let transform = Matrix4::from_translation(position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
                 let mut renderable_indices = Vec::new();
                 self.insert_mesh_from_model(&name, &transform, flags, model, &mut renderable_indices);
-                model.renderable_indices.extend(renderable_indices.drain(..));
+                model.renderable_indices.append(&mut renderable_indices);
             },
             Renderable::Billboard(ref texture, position, size, flags, follow_vertical) => {
                 self.add_billboard(texture.as_str(), position, size, flags, follow_vertical);
@@ -566,7 +566,7 @@ impl Scene {
                 self.remove_mesh(data_index, &name, model);
             },
             Renderable::Mesh(name, _, _) => {
-                self.remove_mesh(data_index, &name, model);
+                self.remove_mesh(data_index, name, model);
             },
             Renderable::Billboard(texture, _, _, _, _) => {
                 *self.billboards.get_mut(texture).unwrap().get_mut(index).unwrap() = *DUMMY_BILLBOARD_DATA;
@@ -636,68 +636,12 @@ impl Scene {
                     let meshes = self.static_meshes.get_mut(name).unwrap();
                     meshes[*index].transform = mesh_transform;
                     meshes[*index].normal_matrix = normal_matrix(mesh_transform);
-                    self.mark_static(&name);
+                    self.mark_static(name);
                 }
             } else {
                 self.update_model_transform_common(renderable, *index, model.transform);
             }
         }
-
-        // if model.foreground {
-        //     for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
-        //         match renderable {
-        //             Renderable::Mesh(name, transform, _) => {
-        //                 let mesh_transform = model.transform * transform;
-        //                 let meshes = self.foreground_meshes.get_mut(name).unwrap();
-        //                 meshes[*index].transform = mesh_transform;
-        //                 meshes[*index].normal_matrix = normal_matrix(mesh_transform);
-        //             },
-        //             Renderable::Brush(texture, position, size, _) => {
-        //                 let name = format!("Brush_{}", texture);
-        //                 let mesh_transform = model.transform * Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
-        //                 let meshes = self.foreground_meshes.get_mut(&name).unwrap();
-        //                 meshes[*index].transform = mesh_transform;
-        //                 meshes[*index].normal_matrix = normal_matrix(mesh_transform);
-        //             },
-        //             _ => self.update_model_transform_common(renderable, *index, model.transform),
-        //         }
-        //     }
-        // } else if !model.mobile {
-        //     for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
-        //         match renderable {
-        //             Renderable::Mesh(name, transform, _) => {
-        //                 let mesh_transform = model.transform * transform;
-        //                 let meshes = self.static_meshes.get_mut(name).unwrap();
-        //                 meshes[*index].transform = mesh_transform;
-        //                 meshes[*index].normal_matrix = normal_matrix(mesh_transform);
-        //                 self.mark_static(name);
-        //             }
-        //             Renderable::Brush(texture, position, size, _) => {
-        //                 let name = format!("Brush_{}", texture);
-        //                 let mesh_transform = model.transform * Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
-        //                 let meshes = self.static_meshes.get_mut(&name).unwrap();
-        //                 meshes[*index].transform = mesh_transform;
-        //                 meshes[*index].normal_matrix = normal_matrix(mesh_transform);
-        //                 self.mark_static(&name);
-        //             },
-        //             _ => self.update_model_transform_common(renderable, *index, model.transform),
-        //         }
-        //     }
-        // } else {
-        //     for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
-        //         match renderable {
-        //             Renderable::Mesh(name, transform, _) => {
-        //                 self.mobile_meshes.get_mut(name).unwrap()[*index].transform = model.transform * transform;
-        //             },
-        //             Renderable::Brush(texture, position, size, _) => {
-        //                 let name = format!("Brush_{}", texture);
-        //                 let transform = Matrix4::from_translation(*position) * Matrix4::from_nonuniform_scale(size.x, size.y, size.z);
-        //                 self.mobile_meshes.get_mut(&name).unwrap()[*index].transform = model.transform * transform;
-        //             },
-        //             _ => self.update_model_transform_common(renderable, *index, model.transform), // we was here
-        //         }
-        //     }
-        // }
     }
 
     pub fn new() -> Self {

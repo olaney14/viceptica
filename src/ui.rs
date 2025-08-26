@@ -4,7 +4,7 @@ use cgmath::vec2;
 use glow::{HasContext, NativeVertexArray};
 use winit::event::MouseButton;
 
-use crate::{input::Input, shader::{Program, ProgramBank}, texture::TextureBank, ui};
+use crate::{input::Input, shader::{Program, ProgramBank}, texture::TextureBank};
 
 const FONT_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .!,- ?  _";
 const FONT_WIDTH: usize = 10;
@@ -13,7 +13,8 @@ const FONT_WIDTH: usize = 10;
 #[derive(Debug)]
 enum FrameType {
     Simple,
-    Interactable
+    Interactable,
+    SelectionBox
 }
 
 pub enum FrameInteraction {
@@ -33,7 +34,8 @@ impl FrameType {
     fn get_texture_origin(&self) -> (u32, u32) {
         match self {
             Self::Simple => (0, 0),
-            Self::Interactable => (48, 0)
+            Self::Interactable => (48, 0),
+            Self::SelectionBox => (0, 48)
         }
     }
 }
@@ -167,7 +169,7 @@ impl UI {
     }
 
     fn _frame(&mut self, x: i32, y: i32, w: u32, h: u32, frame: FrameType, title: &str) {
-        if title.len() == 0 {
+        if title.is_empty() {
             self.add_child_as_current(UINode {
                 children: Vec::new(),
                 clip: (1, 1, w - 2, h - 2),
@@ -194,12 +196,17 @@ impl UI {
         self._frame(x, y, w, h, FrameType::Simple, "");
     }
 
+    fn selection_frame(&mut self, x: i32, y: i32, w: u32, h: u32) {
+        self._frame(x, y, w, h, FrameType::SelectionBox, "");
+    }
+
+    /// Set the last inserted UI object's focus<br>Higher focus values order objects above others
     pub fn set_focus(&mut self, focus: u32) {
         self.last_modified.borrow_mut().focus = focus;
     }
 
     fn global_clip_rect(&self) -> (i32, i32, u32, u32) {
-        let mut clip = self.current_node.borrow().clip.clone();
+        let mut clip = self.current_node.borrow().clip;
         clip.0 += self.current_global_origin.0;
         clip.1 += self.current_global_origin.1;
         clip
@@ -221,8 +228,8 @@ impl UI {
         let gx = x + self.current_global_origin.0;
         let gy = y + self.current_global_origin.1;
         let mouse_within_x = mpx > gx + w as i32 - 16 && mpx < gx + w as i32 && mpy > gy && mpy < gy + 16;
-        let mouse_within_bar = mpx > gx as i32 && mpx < gx + w as i32 && mpy > gy && mpy < gy + 16;
-        let mouse_within_body = mpx > gx as i32 && mpx < gx + w as i32 && mpy > gy + 16 && mpy < gy + h as i32;
+        let mouse_within_bar = mpx > gx && mpx < gx + w as i32 && mpy > gy && mpy < gy + 16;
+        let mouse_within_body = mpx > gx && mpx < gx + w as i32 && mpy > gy + 16 && mpy < gy + h as i32;
         let mouse_within_resize = mpx > gx + w as i32 - 16 && mpx < gx + w as i32 && mpy > gy + h as i32 - 16 && mpy < gy + h as i32;
 
         self._frame(x, y, w, h, FrameType::Interactable, title);
@@ -532,9 +539,9 @@ impl UI {
     unsafe fn traverse_render(&self, node: &NodePtr, clip: (i32, i32, u32, u32), mut local_offset: (i32, i32), textures: &TextureBank, ui_program: &mut Program, gl: &glow::Context) {
         local_offset.0 += node.borrow().x;
         local_offset.1 += node.borrow().y;
-        self.render_node(&node, local_offset, clip, textures, ui_program, gl);
+        self.render_node(node, local_offset, clip, textures, ui_program, gl);
         for child_node in node.borrow().children.iter() {
-            let mut new_clip = node.borrow().clip.clone();
+            let mut new_clip = node.borrow().clip;
             new_clip.0 += local_offset.0;
             new_clip.1 += local_offset.1;
             let intersect = Self::intersect(clip, new_clip);
@@ -576,7 +583,7 @@ pub mod implement {
     use rfd::FileDialog;
     use winit::event::MouseButton;
 
-    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, save::{data_fix, LevelData}, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
+    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
 
     const MATERIAL_FRAME_SIZE: u32 = 100;
 
@@ -673,6 +680,12 @@ pub mod implement {
             self.editor.show_debug(message);
         }
 
+        pub fn selection_box(&mut self, x: i32, y: i32, w: u32, h: u32) {
+            if !self.play_mode {
+                self.editor.selection_box = Some((x, y, w, h));
+            }
+        }
+
         pub unsafe fn init(&mut self, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context) {
             programs.load_by_name_vf("ui", gl).unwrap();
             textures.load_by_name("ui_buttons", gl).unwrap();
@@ -684,7 +697,7 @@ pub mod implement {
 
         pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, world: &mut World) {
             if let Some(light) = world.editor_data.open_light_ui.take() {
-                self.on_light_selected(light, &world);
+                self.on_light_selected(light, world);
             }
 
             if self.play_mode {
@@ -727,7 +740,8 @@ pub mod implement {
         windows: Vec<EditorWindow>,
         mouse_action_origin: (f64, f64),
         highest_focus: u32,
-        debug_output: Vec<(String, u32)>
+        debug_output: Vec<(String, u32)>,
+        selection_box: Option<(i32, i32, u32, u32)>
     }
 
     impl EditorModeUI {
@@ -736,7 +750,8 @@ pub mod implement {
                 mouse_action_origin: (0.0, 0.0),
                 windows: vec![/*EditorWindow::new(EditorWindowType::LightEditor, (100, 100), (400, 400))*/],
                 highest_focus: 0,
-                debug_output: Vec::new()
+                debug_output: Vec::new(),
+                selection_box: None
             }
         }
 
@@ -790,9 +805,9 @@ pub mod implement {
         }
 
         pub fn add_window_with_sliders(&mut self, mut window: EditorWindow, sliders: Vec<u32>) {
-            for i in 0..sliders.len() {
-                window.sliders.slider_levels.push(sliders[i]);
-                window.sliders.sliders.push(SliderInteraction { clicked: false, progress: sliders[i] });
+            for slider in &sliders {
+                window.sliders.slider_levels.push(*slider);
+                window.sliders.sliders.push(SliderInteraction { clicked: false, progress: *slider });
             }
             self.add_window(window);
         }
@@ -817,7 +832,7 @@ pub mod implement {
         pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, ui: &mut UI, world: &mut World) {            
             ui.begin();
 
-            if self.debug_output.len() > 0 {
+            if !self.debug_output.is_empty() {
                 let screen_edge = ui.screen_size.0 - 8;
                 let mut y = 8;
 
@@ -846,7 +861,7 @@ pub mod implement {
 
             let rounded_camera_pos = vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25));
 
-            if ui.image_button(&input, 0, 200, 32, 32, (0, 0), (32, 32), "ui_buttons") {
+            if ui.image_button(input, 0, 200, 32, 32, (0, 0), (32, 32), "ui_buttons") {
                 world.insert_brush(Renderable::Brush(
                     "concrete".to_string(), 
                     rounded_camera_pos, 
@@ -855,14 +870,14 @@ pub mod implement {
                 ));
             }
 
-            if ui.image_button(&input, 0, 200 + 32, 32, 32, (32, 0), (32, 32), "ui_buttons") {
+            if ui.image_button(input, 0, 200 + 32, 32, 32, (32, 0), (32, 32), "ui_buttons") {
                 self.toggle_window(EditorWindowType::MaterialPicker);
             }
-            if ui.image_button(&input, 0, 200 + 64, 32, 32, (64, 0), (32, 32), "ui_buttons") {
+            if ui.image_button(input, 0, 200 + 64, 32, 32, (64, 0), (32, 32), "ui_buttons") {
                 self.toggle_window(EditorWindowType::Test);
             }
 
-            if ui.image_button(&input, 0, 200 + 96, 32, 32, (96, 0), (32, 32), "ui_buttons") {
+            if ui.image_button(input, 0, 200 + 96, 32, 32, (96, 0), (32, 32), "ui_buttons") {
                 let light = world.scene.add_point_light(PointLight::default(vec3(0.0, 0.0, 0.0)));
                 world.insert_model(Model::new(
                     false, Matrix4::from_translation(rounded_camera_pos),
@@ -872,14 +887,19 @@ pub mod implement {
                 ).with_light(light, vec3(0.0, 0.0, 0.0))
                 .collider_cuboid(Vector3::zero(), vec3(0.125, 0.125, 0.125)));
             }
-            if ui.image_button(&input, 0, 200 + 128, 32, 32, (128, 0), (32, 32), "ui_buttons") {
+            if ui.image_button(input, 0, 200 + 128, 32, 32, (128, 0), (32, 32), "ui_buttons") {
                 self.toggle_window(EditorWindowType::SaveLoad);
             }
-            if ui.image_button(&input, 0, 200 + 128 + 32, 32, 32, (128 + 32, 0), (32, 32), "ui_buttons") {
+            if ui.image_button(input, 0, 200 + 128 + 32, 32, 32, (128 + 32, 0), (32, 32), "ui_buttons") {
                 let cur_color = world.scene.environment.dir_light.diffuse;
                 let light_data = vec![200 - (cur_color.x * 200.0) as u32, 200 - (cur_color.y * 200.0) as u32, 200 - (cur_color.z * 200.0) as u32];
 
                 self.toggle_window_with_sliders(EditorWindowType::Environment, light_data);
+            }
+
+            if let Some((x, y, w, h)) = self.selection_box {
+                ui.selection_frame(x, y, w, h);
+                self.selection_box = None;
             }
 
             let mut interaction_highest_focus = 0;
@@ -970,7 +990,7 @@ pub mod implement {
                             let texture = textures.textures.get(*material).unwrap();
                             ui.frame(x, y, MATERIAL_FRAME_SIZE, MATERIAL_FRAME_SIZE);
                             let draw_pos = MATERIAL_FRAME_SIZE / 2 - 32;
-                            if ui.image_button(input, draw_pos as i32, draw_pos as i32, 64, 64, (0, 0), (texture.width, texture.height), *material) {
+                            if ui.image_button(input, draw_pos as i32, draw_pos as i32, 64, 64, (0, 0), (texture.width, texture.height), material) {
                                 world.editor_data.apply_material = Some(material.to_string());
                             }
                             ui.pop();
@@ -1136,7 +1156,7 @@ pub mod implement {
                 self.focus_window(clicked);
             }
 
-            ui.render(textures, programs, &gl);
+            ui.render(textures, programs, gl);
         }
     }
 

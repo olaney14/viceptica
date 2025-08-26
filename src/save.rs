@@ -66,7 +66,7 @@ impl ModelRenderableData {
         }
     }
 
-    pub fn into_renderable(&self) -> world::Renderable {
+    pub fn as_renderable(&self) -> world::Renderable {
         match self {
             Self::Mesh(name, transform, flags) => {
                 world::Renderable::Mesh(name.to_owned(), (*transform).into(), *flags)
@@ -105,14 +105,14 @@ impl ModelColliderData {
         }
     }
 
-    pub fn into_model_collider(&self) -> Option<world::ModelCollider> {
+    pub fn as_model_collider(&self) -> Option<world::ModelCollider> {
         match self {
             Self::None => None,
             Self::Singular { collider } => {
-                Some(collider.into_model_collider())
+                Some(collider.as_model_collider())
             },
             Self::Multiple { colliders } => {
-                Some(world::ModelCollider::Multiple { colliders: colliders.iter().cloned().map(|c| c.into_model_collider()).collect() })
+                Some(world::ModelCollider::Multiple { colliders: colliders.iter().cloned().map(|c| c.as_model_collider()).collect() })
             }
         }
     }
@@ -134,7 +134,7 @@ impl ModelColliderDataSingular {
         colliders
     }
 
-    pub fn into_model_collider(&self) -> world::ModelCollider {
+    pub fn as_model_collider(&self) -> world::ModelCollider {
         match self {
             Self::Cuboid { offset, half_extents } => {
                 world::ModelCollider::Cuboid { offset: (*offset).into(), half_extents: (*half_extents).into() }
@@ -167,14 +167,14 @@ impl ModelData {
         let mut render = Vec::new();
 
         for renderable in self.renderables.iter() {
-            render.push(renderable.into_renderable());
+            render.push(renderable.as_renderable());
         }
 
         let mut model = world::Model::new(
             self.mobile, self.transform.into(), render
         );
 
-        let model_collider = self.insert_colliders.into_model_collider();
+        let model_collider = self.insert_colliders.as_model_collider();
         model.insert_collider = model_collider;
 
         for light in self.lights.iter() {
@@ -187,12 +187,6 @@ impl ModelData {
         model.components = self.components.clone();
 
         world.insert_model(model);
-    }
-}
-
-impl LevelData {
-    pub fn from_world(world: &World) -> Self {
-        world.save_data()
     }
 }
 
@@ -215,7 +209,7 @@ impl World {
                 }
 
                 let insert_colliders = if let Some(insert) = &model.insert_collider {
-                    ModelColliderData::from_model_collider(&insert)
+                    ModelColliderData::from_model_collider(insert)
                 } else {
                     ModelColliderData::None
                 };
@@ -338,7 +332,7 @@ impl World {
         }
 
         world.scene.init(textures, meshes, programs, gl);
-        world.editor_data.selection_box_vao = Some(mesh::create_selection_cube(&gl));
+        world.editor_data.selection_box_vao = Some(mesh::create_selection_cube(gl));
         world.set_internal_brushes(brushes);
         world.set_arrows_visible(false);
         world.move_boxes_far();
@@ -348,31 +342,5 @@ impl World {
         world.freeze = 1;
 
         world
-    }
-}
-
-pub mod data_fix {
-    use crate::save::*;
-
-    #[derive(Deserialize, Serialize)]
-    pub struct LevelDataOld {
-        models: Vec<ModelData>,
-        brushes: Vec<BrushData>,
-        gravity: f32,
-        air_friction: f32,
-        materials: Vec<MaterialData>
-    }
-
-    impl LevelDataOld {
-        pub fn into_new(self) -> LevelData {
-            LevelData {
-                air_friction: self.air_friction,
-                brushes: self.brushes,
-                environment: None,
-                gravity: self.gravity,
-                materials: self.materials,
-                models: self.models
-            }
-        }
     }
 }

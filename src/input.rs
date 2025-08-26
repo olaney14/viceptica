@@ -6,7 +6,8 @@ use winit::{event::MouseButton, keyboard::Key};
 pub enum KeyState {
     Pressed,
     Released,
-    JustPressed
+    JustPressed,
+    JustReleased
 }
 
 /// Input manager, must be updated externally with `on_key_released` and `on_key_pressed`. `update` must be called every frame.
@@ -50,7 +51,8 @@ impl Input {
     }
 
     pub fn on_mouse_button_released(&mut self, button: MouseButton) {
-        self.mouse_buttons.insert(button, KeyState::Released);
+        self.mouse_buttons.insert(button, KeyState::JustReleased);
+        self.needs_update = true;
     }
 
     pub fn set_scroll(&mut self, scroll: f32) {
@@ -69,6 +71,9 @@ impl Input {
             for (_, state) in self.mouse_buttons.iter_mut() {
                 if *state == KeyState::JustPressed {
                     *state = KeyState::Pressed;
+                }
+                if *state == KeyState::JustReleased {
+                    *state = KeyState::Released;
                 }
             }
             self.scroll = 0.0;
@@ -97,7 +102,7 @@ impl Input {
     /// Return true only if `key` is `Released`
     pub fn get_key_released(&self, key: Key) -> bool {
         if let Some(state) = self.keys.get(&key) {
-            return *state == KeyState::Released;
+            return *state == KeyState::Released || *state == KeyState::JustReleased;
         }
 
         true
@@ -113,5 +118,9 @@ impl Input {
 
     pub fn get_mouse_button_released(&self, button: MouseButton) -> bool {
         *self.mouse_buttons.get(&button).unwrap_or(&KeyState::Released) == KeyState::Released
+    }
+
+    pub fn get_mouse_button_just_released(&self, button: MouseButton) -> bool {
+        *self.mouse_buttons.get(&button).unwrap_or(&KeyState::Released) == KeyState::JustReleased
     }
 }
