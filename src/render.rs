@@ -6,7 +6,7 @@ use glow::{HasContext, NativeBuffer, NativeVertexArray};
 use serde::{Deserialize, Serialize};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable}};
+use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable, World}};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -843,5 +843,29 @@ impl Camera {
 impl Scene {
     pub fn add_default_materials(&mut self) {
         self.add_material(Material::new("magic_pixel", "evil_pixel", 32.0), "default");
+    }
+}
+
+impl World {
+    pub unsafe fn post_render(&self, programs: &mut ProgramBank, gl: &glow::Context) {
+        if self.editor_data.active && self.editor_data.selection_box_visible {
+            gl.disable(glow::DEPTH_TEST);
+            gl.line_width(2.0);
+            assert!(self.editor_data.selection_box_vao.is_some());
+            gl.bind_vertex_array(self.editor_data.selection_box_vao);
+            let lines_program = programs.get_mut("lines").unwrap();
+            gl.use_program(Some(lines_program.inner));
+            lines_program.uniform_3f32("color", vec3(0.0, 0.0, 1.0), gl);
+            lines_program.uniform_matrix4f32("view", self.scene.camera.view, gl);
+            lines_program.uniform_matrix4f32("projection", self.scene.camera.projection, gl);
+            let model = 
+                Matrix4::from_translation(self.editor_data.selection_box_pos) *
+                Matrix4::from_nonuniform_scale(self.editor_data.selection_box_scale.x * 2.0, self.editor_data.selection_box_scale.y * 2.0, self.editor_data.selection_box_scale.z * 2.0);
+            
+            lines_program.uniform_matrix4f32("model", model, gl);
+            gl.draw_elements(glow::LINES, 24, glow::UNSIGNED_SHORT, 0);
+            gl.bind_vertex_array(None);
+            gl.enable(glow::DEPTH_TEST);
+        }
     }
 }

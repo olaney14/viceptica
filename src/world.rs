@@ -19,7 +19,7 @@ pub const BRUSH_TEXTURES: [&str; 8] = [
     "container"
 ];
 
-pub const APPLICABLE_MATERIALS: [&str; 10] = [
+pub const APPLICABLE_MATERIALS: [&str; 11] = [
     "concrete",
     "end_sky",
     "evilwatering",
@@ -29,7 +29,8 @@ pub const APPLICABLE_MATERIALS: [&str; 10] = [
     "watering",
     "container",
     "ice",
-    "tar"
+    "tar",
+    "slime"
 ];
 
 pub const DEFAULT_INCREMENT: f32 = 0.25;
@@ -155,12 +156,20 @@ pub unsafe fn load_brushes(textures: &mut TextureBank, meshes: &mut MeshBank, sc
         jump: 1.0
     }, textures, gl);
     meshes.add(Mesh::create_material_cube("ice", gl), "Brush_ice");
+
     scene.load_material_diff_spec_phys("tar", "tar", "tar_specular", PhysicalProperties {
         friction: 0.25,
         control: 0.03,
         jump: 0.1
     }, textures, gl);
     meshes.add(Mesh::create_material_cube("tar", gl), "Brush_tar");
+
+    scene.load_material_diff_spec_phys("slime", "slime", "tar_specular", PhysicalProperties {
+        friction: 0.5,
+        control: 0.2,
+        jump: 2.0
+    }, textures, gl);
+    meshes.add(Mesh::create_material_cube("slime", gl), "Brush_slime");
 }
 
 impl World {
@@ -552,28 +561,6 @@ impl World {
 
         if !removed {
             eprintln!("Removed light was not found in any model");
-        }
-    }
-
-    pub unsafe fn post_render(&self, programs: &mut ProgramBank, gl: &glow::Context) {
-        if self.editor_data.active && self.editor_data.selection_box_visible {
-            gl.disable(glow::DEPTH_TEST);
-            gl.line_width(2.0);
-            assert!(self.editor_data.selection_box_vao.is_some());
-            gl.bind_vertex_array(self.editor_data.selection_box_vao);
-            let lines_program = programs.get_mut("lines").unwrap();
-            gl.use_program(Some(lines_program.inner));
-            lines_program.uniform_3f32("color", vec3(0.0, 0.0, 1.0), gl);
-            lines_program.uniform_matrix4f32("view", self.scene.camera.view, gl);
-            lines_program.uniform_matrix4f32("projection", self.scene.camera.projection, gl);
-            let model = 
-                Matrix4::from_translation(self.editor_data.selection_box_pos) *
-                Matrix4::from_nonuniform_scale(self.editor_data.selection_box_scale.x * 2.0, self.editor_data.selection_box_scale.y * 2.0, self.editor_data.selection_box_scale.z * 2.0);
-            
-            lines_program.uniform_matrix4f32("model", model, gl);
-            gl.draw_elements(glow::LINES, 24, glow::UNSIGNED_SHORT, 0);
-            gl.bind_vertex_array(None);
-            gl.enable(glow::DEPTH_TEST);
         }
     }
 

@@ -318,6 +318,7 @@ pub struct MoveSlideResult {
 pub struct PhysicalProperties {
     pub friction: f32,
     pub control: f32,
+    #[serde(default)]
     pub jump: f32
 }
 

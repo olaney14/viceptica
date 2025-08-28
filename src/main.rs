@@ -93,7 +93,7 @@ fn main() {
         vec![
             Renderable::Brush("container".to_string(), vec3(0.0, 0.0, 0.0), vec3(2.0, 4.0, 0.25), flags::EXTEND_TEXTURE)
         ]
-    ).with_component(Component::Door(component::Door::new(4.0, 3.75, 60)));
+    ).with_component(Component::Door(component::Door::new(8.0, 3.75, 200)));
 
     unsafe { 
         world.scene.init(&mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
