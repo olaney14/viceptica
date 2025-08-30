@@ -1,12 +1,15 @@
 use core::f32;
 use std::{collections::HashMap, sync::LazyLock};
 
-use cgmath::{point3, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, SquareMatrix, Transform, Vector3, Zero};
+use cgmath::{point3, vec2, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, SquareMatrix, Transform, Vector3, Zero};
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
 use serde::{Deserialize, Serialize};
+use winapi::um::gl;
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::TextureBank, ui, world::{self, Model, Renderable, World}};
+use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::{Texture, TextureBank}, ui, world::{self, Model, Renderable, World}};
+
+const HIDDEN_MASK_SIZE: f32 = 0.5;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -29,7 +32,8 @@ pub struct MobileRenderData {
     pub flags: u32,
     pub transform: Matrix4<f32>,
     pub normal_matrix: Matrix3<f32>,
-    pub draw: bool
+    pub draw: bool,
+    pub show_hidden: bool
 }
 
 static DUMMY_RENDER_DATA: LazyLock<MobileRenderData> = LazyLock::new(|| {
@@ -37,7 +41,8 @@ static DUMMY_RENDER_DATA: LazyLock<MobileRenderData> = LazyLock::new(|| {
         flags: 0,
         transform: Matrix4::identity(),
         normal_matrix: Matrix3::identity(),
-        draw: false
+        draw: false,
+        show_hidden: false
     }
 });
 
@@ -47,7 +52,8 @@ pub struct BillboardRenderData {
     pub position: Vector3<f32>,
     pub draw: bool,
     pub follow_vertical: bool,
-    pub size: (f32, f32)
+    pub size: (f32, f32),
+    pub show_hidden: bool
 }
 
 static DUMMY_BILLBOARD_DATA: LazyLock<BillboardRenderData> = LazyLock::new(|| {
@@ -56,7 +62,8 @@ static DUMMY_BILLBOARD_DATA: LazyLock<BillboardRenderData> = LazyLock::new(|| {
         flags: 0,
         follow_vertical: false,
         position: Vector3::zero(),
-        size: (1.0, 1.0)
+        size: (1.0, 1.0),
+        show_hidden: false
     }
 });
 
@@ -211,7 +218,10 @@ pub struct Scene {
     /// If true, `prepare_statics` will be called on the next frame
     pub statics_dirty: bool,
 
-    pub skybox_vao: Option<NativeVertexArray>
+    pub skybox_vao: Option<NativeVertexArray>,
+    pub window_size: (u32, u32),
+    pub ui_vao: Option<NativeVertexArray>,
+    pub show_hidden_objects: bool
 }
 
 impl Scene {
@@ -228,6 +238,7 @@ impl Scene {
         // textures.load_cubemap_by_name("field", gl).unwrap();
         // textures.load_cubemap_by_name("google", gl).unwrap();
         textures.load_cubemap_by_name("heaven", gl).unwrap();
+        textures.load_by_name("stencil_hidden", gl).unwrap();
         self.skybox_vao = Some(mesh::create_skybox(gl));
         //textures.load_cubemap_by_name("heaven", gl).unwrap();
         //textures.load_cubemap_by_name("cloudy_sky", gl).unwrap();
@@ -243,6 +254,70 @@ impl Scene {
         }
     }
 
+    unsafe fn stencil_hidden(&self, ui_program: &mut Program, textures: &TextureBank, gl: &glow::Context) {
+        let hidden_stencil = textures.get("stencil_hidden").unwrap();
+        gl.disable(glow::DEPTH_TEST);
+        gl.disable(glow::CULL_FACE);
+        gl.color_mask(false, false, false, false);
+        gl.stencil_func(glow::ALWAYS, 1, 0xFF);
+        gl.stencil_mask(0xFF);
+        gl.depth_mask(false);
+        gl.stencil_op(glow::REPLACE, glow::REPLACE, glow::REPLACE);
+
+        // render hazard lines to stencil buffer
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(hidden_stencil.inner));
+        gl.bind_vertex_array(self.ui_vao);
+        ui_program.uniform_1i32("tex", 0, gl);
+        let size_y = (self.window_size.0 as f32 / self.window_size.1 as f32) * HIDDEN_MASK_SIZE;
+        ui_program.uniform_2f32("texSize", vec2(HIDDEN_MASK_SIZE, size_y), gl);
+        ui_program.uniform_2f32("pos", vec2(0.0, 0.0), gl);
+        ui_program.uniform_2f32("scale", vec2(self.window_size.0 as f32, self.window_size.1 as f32), gl);
+        ui_program.uniform_2f32("screenSize", vec2(self.window_size.0 as f32, self.window_size.1 as f32), gl);
+        ui_program.uniform_2f32("texturePos", vec2(0.0, 0.0), gl);
+        ui_program.uniform_2f32("textureScale", vec2(16.0, 16.0), gl);
+        gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+    
+        gl.stencil_op(glow::KEEP, glow::KEEP, glow::KEEP);
+        gl.color_mask(true, true, true, true);
+        gl.stencil_func(glow::EQUAL, 1, 0xFF);
+        gl.depth_mask(true);
+        gl.enable(glow::DEPTH_TEST);
+        gl.enable(glow::CULL_FACE);
+    }
+
+    unsafe fn render_single_billboard(&self, data: &BillboardRenderData, quad: &Mesh, program: &mut Program, texture: &str, textures: &TextureBank, gl: &glow::Context) {
+        let forward = if data.follow_vertical {
+            (self.camera.pos.to_vec() - data.position).normalize()
+        } else {
+            let mut f = -self.camera.direction;
+            f.y = 0.0;
+            f.normalize()
+        }; 
+
+        let right = self.camera.up.cross(forward).normalize();
+        let up = forward.cross(right);
+
+        let view_rot = Matrix3::from_cols(right, up, forward);
+
+        let transform = Matrix4::from_translation(data.position) * Matrix4::from_nonuniform_scale(data.size.0, data.size.1, 1.0) * common::mat3_to_mat4(view_rot);
+        program.uniform_matrix4f32("model", transform, gl);
+        program.uniform_1i32("flags", data.flags as i32, gl);
+        program.uniform_1f32("material.shininess", 1.0, gl);
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, textures.get(texture).map(|s| s.inner));
+        gl.active_texture(glow::TEXTURE1);
+        gl.bind_texture(glow::TEXTURE_2D, textures.get("evil_pixel").map(|s| s.inner));
+        gl.bind_vertex_array(Some(quad.vao));
+
+        gl.draw_elements(
+            glow::TRIANGLES,
+            quad.indices as i32,
+            glow::UNSIGNED_SHORT,
+            0
+        );
+    }
+
     /// Call while flat program is being used
     unsafe fn render_billboards(&self, meshes: &MeshBank, program: &mut Program, textures: &TextureBank, gl: &glow::Context) {
         let mesh = meshes.get("quad").expect("no quad mesh");
@@ -251,35 +326,19 @@ impl Scene {
             for data in data.iter() {
                 if !data.draw { continue; }
                 
-                let forward = if data.follow_vertical {
-                    (self.camera.pos.to_vec() - data.position).normalize()
-                } else {
-                    let mut f = -self.camera.direction;
-                    f.y = 0.0;
-                    f.normalize()
-                }; 
+                self.render_single_billboard(data, mesh, program, texture, textures, gl);
+            }
+        }
+    }
 
-                let right = self.camera.up.cross(forward).normalize();
-                let up = forward.cross(right);
+    unsafe fn render_hidden_billboards(&self, meshes: &MeshBank, program: &mut Program, textures: &TextureBank, gl: &glow::Context) {
+        let mesh = meshes.get("quad").expect("no quad mesh");
 
-                let view_rot = Matrix3::from_cols(right, up, forward);
-
-                let transform = Matrix4::from_translation(data.position) * Matrix4::from_nonuniform_scale(data.size.0, data.size.1, 1.0) * common::mat3_to_mat4(view_rot);
-                program.uniform_matrix4f32("model", transform, gl);
-                program.uniform_1i32("flags", data.flags as i32, gl);
-                program.uniform_1f32("material.shininess", 1.0, gl);
-                gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, textures.get(texture).map(|s| s.inner));
-                gl.active_texture(glow::TEXTURE1);
-                gl.bind_texture(glow::TEXTURE_2D, textures.get("evil_pixel").map(|s| s.inner));
-                gl.bind_vertex_array(Some(mesh.vao));
-
-                gl.draw_elements(
-                    glow::TRIANGLES,
-                    mesh.indices as i32,
-                    glow::UNSIGNED_SHORT,
-                    0
-                );
+        for (texture, data) in self.billboards.iter() {
+            for data in data {
+                if !data.draw && data.show_hidden {
+                    self.render_single_billboard(data, mesh, program, texture, textures, gl);
+                }
             }
         }
     }
@@ -361,6 +420,26 @@ impl Scene {
 
         self.render_billboards(meshes, flat_program, textures, gl);
 
+        if self.show_hidden_objects {
+            gl.clear_stencil(0);
+            gl.clear(glow::STENCIL_BUFFER_BIT);
+            gl.enable(glow::STENCIL_TEST);
+            let ui_program = programs.get_mut("ui").unwrap();
+            gl.use_program(Some(ui_program.inner));
+            self.stencil_hidden(ui_program, textures, gl);
+
+            let flat_program = programs.get_mut("flat").unwrap();
+            gl.use_program(Some(flat_program.inner));
+
+            for (name, data) in self.mobile_meshes.iter() {
+                self.render_hidden(data, name, meshes, textures, flat_program, gl);
+            }
+
+            self.render_hidden_billboards(meshes, flat_program, textures, gl);
+
+            gl.disable(glow::STENCIL_TEST);
+        }
+
         // Render cubemap skybox
         if let Skybox::Cubemap(cubemap) = &self.environment.skybox {
             // https://learnopengl.com/Advanced-OpenGL/Cubemaps
@@ -395,6 +474,27 @@ impl Scene {
         gl.enable(glow::DEPTH_TEST);
     }
 
+
+    #[inline]
+    unsafe fn render_single_mesh(&self, data: &MobileRenderData, textures: &TextureBank, program: &mut Program, material: &Material, mesh: &Mesh, gl: &glow::Context) {
+        program.uniform_matrix4f32("model", data.transform, gl);
+        program.uniform_matrix3f32("normal_matrix", data.normal_matrix, gl);
+        program.uniform_1i32("flags", data.flags as i32, gl);
+        program.uniform_1f32("material.shininess", material.shininess, gl);
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.diffuse).map(|s| s.inner));
+        gl.active_texture(glow::TEXTURE1);
+        gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.specular).map(|s| s.inner));
+        gl.bind_vertex_array(Some(mesh.vao));
+
+        gl.draw_elements(
+            glow::TRIANGLES,
+            mesh.indices as i32,
+            glow::UNSIGNED_SHORT,
+            0
+        );
+    }
+
     #[inline]
     unsafe fn render_individual(&self, data: &[MobileRenderData], name: &String, meshes: &MeshBank, textures: &TextureBank, program: &mut shader::Program, gl: &glow::Context) {
         let mesh = meshes.get(name).unwrap_or_else(|| panic!("Missing mesh \"{}\"", name));
@@ -405,22 +505,19 @@ impl Scene {
             if !data.draw { continue; }
 
             // Set transform and flags individually instead as of part of the instance buffer
-            program.uniform_matrix4f32("model", data.transform, gl);
-            program.uniform_matrix3f32("normal_matrix", data.normal_matrix, gl);
-            program.uniform_1i32("flags", data.flags as i32, gl);
-            program.uniform_1f32("material.shininess", material.shininess, gl);
-            gl.active_texture(glow::TEXTURE0);
-            gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.diffuse).map(|s| s.inner));
-            gl.active_texture(glow::TEXTURE1);
-            gl.bind_texture(glow::TEXTURE_2D, textures.get(&material.specular).map(|s| s.inner));
-            gl.bind_vertex_array(Some(mesh.vao));
+            self.render_single_mesh(data, textures, program, material, mesh, gl);
+        }
+    }
 
-            gl.draw_elements(
-                glow::TRIANGLES,
-                mesh.indices as i32,
-                glow::UNSIGNED_SHORT,
-                0
-            ); 
+    #[inline]
+    unsafe fn render_hidden(&self, data: &[MobileRenderData], name: &String, meshes: &MeshBank, textures: &TextureBank, program: &mut Program, gl: &glow::Context) {
+        let mesh = meshes.get(name).unwrap_or_else(|| panic!("Missing mesh \"{}\"", name));
+        let material = self.materials.get(&mesh.material).unwrap_or_else(|| panic!("Missing material \"{}\"", mesh.material));
+
+        for data in data {
+            if !data.draw && data.show_hidden {
+                self.render_single_mesh(data, textures, program, material, mesh, gl);
+            }
         }
     }
 
@@ -457,26 +554,26 @@ impl Scene {
     /// Add a mobile mesh to the render scene
     fn add_mobile_mesh(&mut self, mesh: &str, transform: Matrix4<f32>, flags: u32) {
         if let Some(transforms) = self.mobile_meshes.get_mut(mesh) {
-            transforms.push(MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform) });
+            transforms.push(MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform), show_hidden: false });
         } else {
-            self.mobile_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform) }]);
+            self.mobile_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform), show_hidden: false }]);
         }
     }
 
     /// Add a foreground mesh to the render scene (no depth test, drawn last)
     fn add_foreground_mesh(&mut self, mesh: &str, transform: Matrix4<f32>, flags: u32) {
         if let Some(transforms) = self.foreground_meshes.get_mut(mesh) {
-            transforms.push(MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform) });
+            transforms.push(MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform), show_hidden: false });
         } else {
-            self.foreground_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform) }]);
+            self.foreground_meshes.insert(mesh.to_string(), vec![MobileRenderData { transform, flags, draw: true, normal_matrix: normal_matrix(transform), show_hidden: false }]);
         }
     }
 
     fn add_billboard(&mut self, texture: &str, position: Vector3<f32>, size: (f32, f32), flags: u32, follow_vertical: bool) {
         if let Some(data) = self.billboards.get_mut(texture) {
-            data.push(BillboardRenderData { position, flags, size, follow_vertical, draw: true });
+            data.push(BillboardRenderData { position, flags, size, follow_vertical, draw: true, show_hidden: false });
         } else {
-            self.billboards.insert(texture.to_string(), vec![BillboardRenderData { position, flags, size, follow_vertical, draw: true }]);
+            self.billboards.insert(texture.to_string(), vec![BillboardRenderData { position, flags, size, follow_vertical, draw: true, show_hidden: false }]);
         }
     }
 
@@ -657,7 +754,10 @@ impl Scene {
             point_lights: Vec::new(),
             statics_dirty: false,
             skybox_vao: None,
-            billboards: HashMap::new()
+            billboards: HashMap::new(),
+            window_size: (640 * 2, 480 * 2),
+            ui_vao: None,
+            show_hidden_objects: false
         }
     }
 

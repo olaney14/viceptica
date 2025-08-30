@@ -30,6 +30,7 @@ fn main() {
     let mut input = input::Input::new();
     let mut world = world::World::new();
     let mut ui = ui::implement::VicepticaUI::new(&gl);
+    world.scene.ui_vao = Some(ui.inner.vao);
     let opengl_debug = Arc::new(Mutex::new(Vec::new()));
 
     unsafe {
@@ -40,8 +41,8 @@ fn main() {
                 debug_clone.lock().unwrap().push(format!("[OpenGL, high severity] {}", msg));
                 println!("[OpenGL, high severity] {}", msg);
             } else if severity == glow::DEBUG_SEVERITY_MEDIUM {
-                debug_clone.lock().unwrap().push(format!("[OpenGL, medium severity] {}", msg));
-                println!("[OpenGL, medium severity] {}", msg);
+                // debug_clone.lock().unwrap().push(format!("[OpenGL, medium severity] {}", msg));
+                // println!("[OpenGL, medium severity] {}", msg);
             }
         });
 
@@ -85,7 +86,7 @@ fn main() {
         vec![
             Renderable::Billboard("komari".to_string(), vec3(0.0, 0.0, 0.0), (1.0, 2.0), flags::FULLBRIGHT | flags::CUTOUT, false)
         ]
-    ).collider_cuboid(vec3(0.0, 0.0, 0.0), vec3(0.125, 0.125, 0.125)).non_solid();
+    ).collider_cuboid(vec3(0.0, 0.0, 0.0), vec3(0.125, 0.125, 0.125)).non_solid().insert_hidden();
 
     let door = Model::new(
         true,
@@ -93,7 +94,7 @@ fn main() {
         vec![
             Renderable::Brush("container".to_string(), vec3(0.0, 0.0, 0.0), vec3(2.0, 4.0, 0.25), flags::EXTEND_TEXTURE)
         ]
-    ).with_component(Component::Door(component::Door::new(8.0, 3.75, 200)));
+    ).with_component(Component::Door(component::Door::new(8.0, 3.75, 200))).insert_hidden();
 
     unsafe { 
         world.scene.init(&mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
@@ -141,6 +142,7 @@ fn main() {
                                     world.player.movement = PlayerMovementMode::FollowCamera;
                                     grab_cursor = false;
                                     world.editor_data.active = true;
+                                    world.scene.show_hidden_objects = true;
                                     world.do_game_logic = false;
                                     ui.play_mode = false;
                                 },
@@ -151,6 +153,7 @@ fn main() {
                                     world.player.movement = PlayerMovementMode::FirstPerson;
                                     grab_cursor = false;
                                     world.editor_data.active = false;
+                                    world.scene.show_hidden_objects = false;
                                     world.do_game_logic = true;
                                     world.deselect();
                                     ui.play_mode = true;
@@ -276,10 +279,12 @@ fn main() {
                             new_world.scene.camera.control_sceme = world.scene.camera.control_sceme.clone();
                             new_world.player.movement = world.player.movement.clone();
                             new_world.editor_data.active = world.editor_data.active;
+                            new_world.scene.show_hidden_objects = world.scene.show_hidden_objects;
                             new_world.editor_data.increment = world.editor_data.increment;
                             new_world.editor_data.save_to = world.editor_data.save_to.clone();
                             let window_size =  window.inner_size(); 
                             new_world.scene.camera.on_window_resized(window_size.width as f32, window_size.height as f32);
+                            new_world.scene.window_size = (window_size.width, window_size.height);
                             world = new_world;
                         }
 
@@ -344,6 +349,7 @@ fn main() {
                     WindowEvent::Resized(new_size) => unsafe {
                         gl.viewport(0, 0, new_size.width as i32, new_size.height as i32);
                         world.scene.camera.on_window_resized(new_size.width as f32, new_size.height as f32);
+                        world.scene.window_size = (new_size.width, new_size.height);
                         ui.inner.screen_size = (new_size.width, new_size.height);
                     },
                     _ => ()

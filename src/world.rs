@@ -510,9 +510,15 @@ impl World {
             }
         }
 
+        let hidden = model.hidden;
         model.index = Some(self.models.len());
         self.pre_insert_model(&mut model);
         self.models.push(Some(model));
+
+        if hidden {
+            self.set_model_visible(self.models.len() - 1, false);
+        }
+
         self.models.len() - 1
     }
 
@@ -821,19 +827,34 @@ impl World {
         self.editor_data.light_selected = None;
     }
 
-    pub fn set_model_visible(&mut self, model: usize, visible: bool) {
+    fn set_model_visible_hidden(&mut self, model: usize, visible: bool, show_hidden: bool) {
         if let Some(model) = self.models.get(model).as_ref().unwrap() {
             assert!(model.mobile, "Only mobile models can be hidden");
             for (renderable, index) in model.render.iter().zip(model.renderable_indices.iter()) {
                 if let Some(mesh) = renderable.get_mesh() {
                     if model.foreground {
-                        self.scene.foreground_meshes.get_mut(mesh).unwrap().get_mut(*index).unwrap().draw = visible;
+                        self.scene.foreground_meshes.get_mut(&mesh).unwrap().get_mut(*index).unwrap().draw = visible;
+                        self.scene.foreground_meshes.get_mut(&mesh).unwrap().get_mut(*index).unwrap().show_hidden = show_hidden;
                     } else {
-                        self.scene.mobile_meshes.get_mut(mesh).unwrap().get_mut(*index).unwrap().draw = visible;
+                        self.scene.mobile_meshes.get_mut(&mesh).unwrap().get_mut(*index).unwrap().draw = visible;
+                        self.scene.mobile_meshes.get_mut(&mesh).unwrap().get_mut(*index).unwrap().show_hidden = show_hidden;
                     }  
+                }
+
+                if let Renderable::Billboard(tex, ..) = renderable {
+                    self.scene.billboards.get_mut(tex).unwrap()[*index].draw = visible;
+                    self.scene.billboards.get_mut(tex).unwrap()[*index].show_hidden = show_hidden;
                 }
             }
         }
+    }
+
+    pub fn set_model_visible(&mut self, model: usize, visible: bool) {
+        self.set_model_visible_hidden(model, visible, !visible);
+    }
+
+    pub fn set_model_visible_absolute(&mut self, model: usize, visible: bool) {
+        self.set_model_visible_hidden(model, visible, false);
     }
 
     // https://antongerdelan.net/opengl/raycasting.html
@@ -973,7 +994,9 @@ impl World {
             mobile: model.mobile,
             render: model.render.clone(),
             renderable_indices: Vec::new(),
-            components: model.components.clone()
+            components: model.components.clone(),
+            hidden: model.hidden,
+            hidden_dirty: model.hidden_dirty
         };
 
         for (offset, i) in model.lights.iter() {
@@ -1012,6 +1035,22 @@ impl World {
         }
 
         self.player.update(&self.scene.camera, input);
+
+        let mut set_visible = Vec::new();
+
+        for model in self.models.iter_mut() {
+            if let Some(model) = model {
+                if model.hidden_dirty {
+                    model.hidden_dirty = false;
+                    set_visible.push((model.index.unwrap(), model.hidden));
+                    // self.set_model_visible(model.index.unwrap(), model.hidden);
+                }
+            }
+        }
+
+        for (model, visible) in &set_visible {
+            self.set_model_visible(*model, *visible);
+        }
 
         let mut selection = self.editor_data.selected_object.take();
         let mut selection_changed = false;
@@ -1252,10 +1291,10 @@ pub enum Renderable {
 }
 
 impl Renderable {
-    pub fn get_mesh(&self) -> Option<&str> {
+    pub fn get_mesh(&self) -> Option<String> {
         match self {
-            Self::Mesh(s, _, _) => Some(s),
-            Self::Brush(s, _, _, _) => Some(s),
+            Self::Mesh(s, _, _) => Some(s.to_owned()),
+            Self::Brush(s, _, _, _) => Some(format!("Brush_{}", s)),
             _ => None
         }
     }
@@ -1299,7 +1338,9 @@ pub struct Model {
     /// offset, half extents
     pub extents: Option<(Vector3<f32>, Vector3<f32>)>,
     pub lights: Vec<(Vector3<f32>, usize)>,
-    pub components: Vec<Component>
+    pub components: Vec<Component>,
+    pub hidden: bool,
+    pub hidden_dirty: bool
 }
 
 impl Model {
@@ -1316,7 +1357,9 @@ impl Model {
             solid: true,
             extents: None,
             lights: Vec::new(),
-            components: Vec::new()
+            components: Vec::new(),
+            hidden: false,
+            hidden_dirty: false
         }
     }
 
@@ -1337,7 +1380,9 @@ impl Model {
             solid: true,
             extents: None,
             lights: Vec::new(),
-            components: Vec::new()
+            components: Vec::new(),
+            hidden: false,
+            hidden_dirty: false
         };
 
         while meshes.get(&format!("File_{}{}", file, current_index)).is_some() {
@@ -1391,6 +1436,21 @@ impl Model {
 
     pub fn scale(self, by: f32) -> Self {
         self.transform(Matrix4::from_scale(by))
+    }
+
+    pub fn insert_hidden(mut self) -> Self {
+        self.hidden = true;
+        self
+    }
+
+    pub fn hide(&mut self) {
+        self.hidden = true;
+        self.hidden_dirty = true;
+    }
+
+    pub fn show(&mut self) {
+        self.hidden = false;
+        self.hidden_dirty = true;
     }
 
     fn insert_collider(&mut self, collider: ModelCollider) {

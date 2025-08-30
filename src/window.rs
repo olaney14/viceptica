@@ -14,7 +14,8 @@ pub unsafe fn create_gl_context() -> ProgramContext {
         .with_title("VICEPTICA")
         .with_inner_size(winit::dpi::LogicalSize::new(640.0 * 2.0, 480.0 * 2.0));
 
-    let template = ConfigTemplateBuilder::new();
+    let template = ConfigTemplateBuilder::new()
+        .with_stencil_size(8);
 
     let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));
 
