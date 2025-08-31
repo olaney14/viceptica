@@ -829,6 +829,10 @@ pub mod implement {
             None
         }
 
+        fn draw_ui_button(ui: &mut UI, input: &Input, x: i32, y: i32, tx: u32, ty: u32) -> bool {
+            ui.image_button(input, x, y, 32, 32, (tx, ty), (32, 32), "ui_buttons")
+        }
+
         pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, ui: &mut UI, world: &mut World) {            
             ui.begin();
 
@@ -861,7 +865,7 @@ pub mod implement {
 
             let rounded_camera_pos = vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25));
 
-            if ui.image_button(input, 0, 200, 32, 32, (0, 0), (32, 32), "ui_buttons") {
+            if Self::draw_ui_button(ui, input, 0, 200, 0, 0) {
                 world.insert_brush(Renderable::Brush(
                     "concrete".to_string(), 
                     rounded_camera_pos, 
@@ -870,14 +874,14 @@ pub mod implement {
                 ));
             }
 
-            if ui.image_button(input, 0, 200 + 32, 32, 32, (32, 0), (32, 32), "ui_buttons") {
+            if Self::draw_ui_button(ui, input, 0, 200 + 32, 32, 0) {
                 self.toggle_window(EditorWindowType::MaterialPicker);
             }
-            if ui.image_button(input, 0, 200 + 64, 32, 32, (64, 0), (32, 32), "ui_buttons") {
+            if Self::draw_ui_button(ui, input, 0, 200 + 64, 64, 0) {
                 self.toggle_window(EditorWindowType::Test);
             }
 
-            if ui.image_button(input, 0, 200 + 96, 32, 32, (96, 0), (32, 32), "ui_buttons") {
+            if Self::draw_ui_button(ui, input, 0, 200 + 96, 96, 0) {
                 let light = world.scene.add_point_light(PointLight::default(vec3(0.0, 0.0, 0.0)));
                 world.insert_model(Model::new(
                     false, Matrix4::from_translation(rounded_camera_pos),
@@ -887,14 +891,17 @@ pub mod implement {
                 ).with_light(light, vec3(0.0, 0.0, 0.0))
                 .collider_cuboid(Vector3::zero(), vec3(0.125, 0.125, 0.125)));
             }
-            if ui.image_button(input, 0, 200 + 128, 32, 32, (128, 0), (32, 32), "ui_buttons") {
+            if Self::draw_ui_button(ui, input, 0, 200 + 128, 128, 0) {
                 self.toggle_window(EditorWindowType::SaveLoad);
             }
-            if ui.image_button(input, 0, 200 + 128 + 32, 32, 32, (128 + 32, 0), (32, 32), "ui_buttons") {
+            if Self::draw_ui_button(ui, input, 0, 200 + 128 + 32, 128 + 32, 0) {
                 let cur_color = world.scene.environment.dir_light.diffuse;
                 let light_data = vec![200 - (cur_color.x * 200.0) as u32, 200 - (cur_color.y * 200.0) as u32, 200 - (cur_color.z * 200.0) as u32];
 
                 self.toggle_window_with_sliders(EditorWindowType::Environment, light_data);
+            }
+            if Self::draw_ui_button(ui, input, 0, 200 + 128 + 64, 0, 32) {
+                world.toggle_hide_selection();
             }
 
             if let Some((x, y, w, h)) = self.selection_box {

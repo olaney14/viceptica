@@ -347,6 +347,51 @@ impl World {
         }
     }
 
+    pub fn make_brush_unique(&mut self, index: usize) -> usize {
+        let mut brush = self.models[self.internal.brushes].as_ref().unwrap().render[index].clone();
+        self.remove_brush(index);
+        let mut model_transform = Matrix4::identity();
+        if let Renderable::Brush(_, origin, _, _) = &mut brush {
+            model_transform = model_transform * Matrix4::from_translation(*origin);
+            *origin = Vector3::zero()
+        }
+
+        let model = Model::new(true, model_transform, vec![brush]);
+
+        self.insert_model(model)
+    }
+
+    fn toggle_hide_model(&mut self, index: usize) {
+        let new_visible_state = self.models[index].as_ref().unwrap().hidden;
+        self.set_model_visible(index, new_visible_state);
+        self.models[index].as_mut().unwrap().hidden = !new_visible_state;
+    }
+
+    fn toggle_hide_brush(&mut self, index: usize) {
+        let unique = self.make_brush_unique(index);
+        self.toggle_hide_model(unique);
+    }
+
+    pub fn toggle_hide_selection(&mut self) {
+        if self.editor_data.selected_object.is_some() {
+            let selection = self.editor_data.selected_object.take().unwrap();
+            match &selection {
+                Selection::Model(index) => self.toggle_hide_model(*index),
+                Selection::Brush(index) => self.toggle_hide_brush(*index),
+                Selection::Multiple(multiple) => {
+                    for selection in multiple {
+                        match selection {
+                            Selection::Model(index) => self.toggle_hide_model(*index),
+                            Selection::Brush(index) => self.toggle_hide_brush(*index),
+                            _ => unreachable!()
+                        }
+                    }
+                }
+            }
+            self.editor_data.selected_object = Some(selection);
+        }
+    }
+
     fn can_be_selected(&self, model: usize) -> bool {
         !self.internal.internal_ids.contains(&model)
     }
