@@ -62,10 +62,10 @@ impl Component {
 
         match &mut component {
             Component::Door(door) => {
+                if !door.opened {
+                    door.origin = model.origin().into();
+                }
                 if world.do_game_logic {
-                    if !door.opened {
-                        door.origin = model.origin().into();
-                    }
                     let origin: Vector3<f32> = door.origin.into();
                     let dist2 = world.scene.camera.pos.distance2(Point3::from_vec(origin));
                     if dist2 < door.radius.powf(2.0) {
@@ -80,15 +80,22 @@ impl Component {
                             door.open_progress -= 1;
                         } else {
                             door.opened = false;
-                            let original_transform = common::mat4_remove_translation(model.transform) * Matrix4::from_translation(origin);
+                            let original_transform = Matrix4::from_translation(origin) * common::mat4_remove_translation(model.transform);
                             model = world.set_model_transform_external(model, original_transform);
                         }
                     }
 
                     if door.open_progress > 0 {
-                        let original_transform = common::mat4_remove_translation(model.transform) * Matrix4::from_translation(origin);
-                        let new_transform = original_transform * Matrix4::from_translation(vec3(0.0, (door.height / door.open_time as f32) * door.open_progress as f32, 0.0));
+                        let original_transform = Matrix4::from_translation(origin) * common::mat4_remove_translation(model.transform);
+                        let new_transform = Matrix4::from_translation(vec3(0.0, (door.height / door.open_time as f32) * door.open_progress as f32, 0.0)) * original_transform;
                         model = world.set_model_transform_external(model, new_transform);
+                    }
+                } else {
+                    if door.opened {
+                        door.opened = false;
+                        door.open_progress = 0;
+                        let original_transform = Matrix4::from_translation(door.origin.into()) * common::mat4_remove_translation(model.transform);
+                        model = world.set_model_transform_external(model, original_transform);
                     }
                 }
             },

@@ -1,11 +1,11 @@
 use std::{sync::{Mutex, Arc}, thread, time::{Duration, Instant}};
 
-use cgmath::{vec3, Matrix4, SquareMatrix, Vector3, Zero};
+use cgmath::{vec3, Matrix, Matrix4, SquareMatrix, Vector3, Zero};
 use glow::{HasContext};
 use glutin::surface::GlSurface;
 use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
-use crate::{collision::RaycastParameters, component::Component, mesh::flags, render::CameraControlScheme, world::{Model, PlayerMovementMode, Renderable, World}};
+use crate::{collision::{ColliderShape, RaycastParameters}, component::Component, mesh::flags, render::CameraControlScheme, world::{Model, PlayerMovementMode, Renderable, World}};
 
 mod ui;
 mod mesh;
@@ -21,6 +21,7 @@ mod collision;
 mod component;
 
 const MS_PER_FRAME: u64 = 8;
+// const DEBUG_DRAW_COLLIDERS: bool = true;
 
 fn main() {
     let (mut gl, gl_surface, gl_context, window, event_loop) = unsafe { window::create_gl_context() };
@@ -261,6 +262,34 @@ fn main() {
                         world.scene.update(&mut mesh_bank, &gl);
 
                         world.scene.render(&mesh_bank, &mut program_bank, &texture_bank, &gl);
+                        if world.editor_data.show_colliders {
+                            for collider in world.physical_scene.colliders.iter() {
+                                if let Some(collider) = collider {
+                                    // skip player
+                                    if collider.model.is_none() { continue; }
+                                    let pos = vec3(collider.bounding.center().x, collider.bounding.center().y, collider.bounding.center().z);
+                                    let scale = vec3(collider.bounding.half_extents().x, collider.bounding.half_extents().y, collider.bounding.half_extents().z);
+                                    let model = 
+                                        Matrix4::from_translation(pos) *
+                                        Matrix4::from_nonuniform_scale(scale.x * 2.0, scale.y * 2.0, scale.z * 2.0);
+                                    world.scene.debug_render_box(model, vec3(1.0, 0.0, 0.0), world.editor_data.selection_box_vao.unwrap(), &mut program_bank, &gl);
+                                    match collider.shape {
+                                        ColliderShape::Cuboid(cuboid) => {
+                                            // let pos = vec3(collider.iso.translation.x, collider.iso.translation.y, collider.iso.translation.z);
+                                            let scale = vec3(cuboid.half_extents.x, cuboid.half_extents.y, cuboid.half_extents.z) * 2.0;
+                                            let tna = collider.iso.to_matrix();
+                                            let transform = Matrix4::new(
+                                                tna.m11, tna.m12, tna.m13, tna.m14,
+                                                tna.m21, tna.m22, tna.m23, tna.m24,
+                                                tna.m31, tna.m32, tna.m33, tna.m34,
+                                                tna.m41, tna.m42, tna.m43, tna.m44,
+                                            ).transpose() * Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z);
+                                            world.scene.debug_render_box(transform, vec3(0.4, 0.1, 0.8), world.editor_data.selection_box_vao.unwrap(), &mut program_bank, &gl);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         world.post_render(&mut program_bank, &gl);
 
                         for line in world.editor_data.show_debug.drain(..) {
@@ -285,6 +314,7 @@ fn main() {
                             let window_size =  window.inner_size(); 
                             new_world.scene.camera.on_window_resized(window_size.width as f32, window_size.height as f32);
                             new_world.scene.window_size = (window_size.width, window_size.height);
+                            new_world.scene.ui_vao = world.scene.ui_vao;
                             world = new_world;
                         }
 

@@ -6,7 +6,7 @@ use glow::{HasContext, NativeVertexArray};
 use parry3d::bounding_volume::BoundingVolume;
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common, component::Component, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, Scene}, save::LevelData, shader::ProgramBank, texture::TextureBank};
+use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common::{self, compose_extents, mat4_remove_translation, translation, vec3_all, vec3_div_compwise, vec3_zero}, component::Component, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, Scene}, save::LevelData, shader::ProgramBank, texture::TextureBank};
 
 pub const BRUSH_TEXTURES: [&str; 8] = [
     "concrete",
@@ -46,7 +46,7 @@ pub enum Selection {
     Multiple(Vec<Selection>)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum SelectionType {
     Movement,
     Scaling,
@@ -89,7 +89,8 @@ pub struct EditorModeData {
     pub open_light_ui: Option<usize>,
     pub save_to: Option<PathBuf>,
     pub show_debug: Vec<String>,
-    pub multiple_selection_offsets: Vec<Vector3<f32>>
+    pub multiple_selection_offsets: Vec<Vector3<f32>>,
+    pub show_colliders: bool
 }
 
 impl EditorModeData {
@@ -141,7 +142,12 @@ pub struct InternalModels {
     pub box_ny: usize,
     pub box_pz: usize,
     pub box_nz: usize,
-    pub internal_ids: Vec<usize>
+    /// Tested against to check if a selection is valid
+    pub internal_ids: Vec<usize>,
+    /// IDs of all internal movement arrows
+    pub arrows: Vec<usize>,
+    /// IDs of all internal scaling boxes
+    pub boxes: Vec<usize>
 }
 
 pub unsafe fn load_brushes(textures: &mut TextureBank, meshes: &mut MeshBank, scene: &mut Scene, gl: &glow::Context) {
@@ -203,14 +209,15 @@ impl World {
                 open_light_ui: None,
                 save_to: None,
                 show_debug: Vec::new(),
-                multiple_selection_offsets: Vec::new()
+                multiple_selection_offsets: Vec::new(),
+                show_colliders: false
             },
             load_new: None,
             freeze: 0,
             do_game_logic: true
         };
 
-        world.player.collider = world.physical_scene.add_collider(Collider::cuboid(Vector3::zero(), vec3(0.5, 2.0, 0.5), Vector3::zero()));
+        world.player.collider = world.physical_scene.add_collider(Collider::cuboid(Vector3::zero(), vec3(0.5, 2.0, 0.5), Vector3::zero(), Matrix4::identity()));
 
         world
     }
@@ -227,20 +234,20 @@ impl World {
         }
 
         // Collider is slightly larger than the arrow to make them less annoying to click
-        self.internal.arrow_px = self.insert_model(Model::from_loaded_file("arrowred", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0).non_solid());
-        self.internal.arrow_py = self.insert_model(Model::from_loaded_file("arrowblue", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0).non_solid());
-        self.internal.arrow_pz = self.insert_model(Model::from_loaded_file("arrowgreen", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, 0.15), vec3(0.375, 0.375, 1.75) / 2.0).non_solid());
-        self.internal.arrow_nx = self.insert_model(Model::from_loaded_file("arrowred", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(-0.15, 0.0, 0.0), vec3(1.75, 0.375, 0.375) / 2.0).non_solid());
-        self.internal.arrow_ny = self.insert_model(Model::from_loaded_file("arrowblue", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, -0.15, 0.0), vec3(0.375, 1.75, 0.375) / 2.0).non_solid());
-        self.internal.arrow_nz = self.insert_model(Model::from_loaded_file("arrowgreen", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.0, -0.15), vec3(0.375, 0.375, 1.75) / 2.0).non_solid());
+        self.internal.arrow_px = self.insert_model(Model::from_loaded_file("arrowred", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, -0.15, 0.0), vec3(0.375, 1.75, 0.375)).non_solid());
+        self.internal.arrow_py = self.insert_model(Model::from_loaded_file("arrowblue", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.15, 0.0), vec3(0.375, 1.75, 0.375)).non_solid());
+        self.internal.arrow_pz = self.insert_model(Model::from_loaded_file("arrowgreen", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, -0.15, 0.0), vec3(0.375, 1.75, 0.375)).non_solid());
+        self.internal.arrow_nx = self.insert_model(Model::from_loaded_file("arrowred", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, -0.15, 0.0), vec3(0.375, 1.75, 0.375)).non_solid());
+        self.internal.arrow_ny = self.insert_model(Model::from_loaded_file("arrowblue", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, 0.15, 0.0), vec3(0.375, 1.75, 0.375)).non_solid());
+        self.internal.arrow_nz = self.insert_model(Model::from_loaded_file("arrowgreen", meshes).unwrap().fullbright().foreground().collider_cuboid(vec3(0.0, -0.15, 0.0), vec3(0.375, 1.75, 0.375)).non_solid());
         self.internal.brushes = self.insert_model(Model::new(false, Matrix4::identity(), Vec::new()));
         self.internal.debug_arrow = self.insert_model(Model::from_loaded_file("arrow", meshes).unwrap().fullbright().mobile());
-        self.internal.box_px = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
-        self.internal.box_nx = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
-        self.internal.box_py = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
-        self.internal.box_ny = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
-        self.internal.box_pz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
-        self.internal.box_nz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.3, 0.3, 0.3)).foreground().non_solid());
+        self.internal.box_px = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.6, 0.6, 0.6)).foreground().non_solid());
+        self.internal.box_nx = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubered".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.6, 0.6, 0.6)).foreground().non_solid());
+        self.internal.box_py = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.6, 0.6, 0.6)).foreground().non_solid());
+        self.internal.box_ny = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubeblue".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.6, 0.6, 0.6)).foreground().non_solid());
+        self.internal.box_pz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.6, 0.6, 0.6)).foreground().non_solid());
+        self.internal.box_nz = self.insert_model(Model::new(true, Matrix4::identity(), vec![ Renderable::Mesh("cubegreen".to_string(), Matrix4::identity(), flags::FULLBRIGHT) ]).collider_cuboid(Vector3::zero(), vec3(0.6, 0.6, 0.6)).foreground().non_solid());
     
         self.internal.internal_ids.extend(vec![
             self.internal.arrow_px, self.internal.arrow_py, self.internal.arrow_pz,
@@ -249,27 +256,41 @@ impl World {
             self.internal.box_px, self.internal.box_py, self.internal.box_pz,
             self.internal.box_nx, self.internal.box_ny, self.internal.box_nz,
         ]);
+        self.internal.arrows = vec![
+            self.internal.arrow_px, self.internal.arrow_nx, 
+            self.internal.arrow_py, self.internal.arrow_ny,
+            self.internal.arrow_pz, self.internal.arrow_nz
+        ];
+        self.internal.boxes = vec![
+            self.internal.box_px, self.internal.box_nx, 
+            self.internal.box_py, self.internal.box_ny,
+            self.internal.box_pz, self.internal.box_nz
+        ];
+    }
+
+    fn cycle_selection(&mut self) {
+        match self.editor_data.selection_type {
+            SelectionType::Movement => {
+                self.set_arrows_visible(false);
+                self.set_boxes_visible(true);
+                self.move_arrows_far();
+            },
+            SelectionType::Scaling => {
+                self.set_arrows_visible(true);
+                self.set_boxes_visible(false);
+                self.move_boxes_far();
+            },
+            // _ => ()
+        } 
+        
+        self.editor_data.selection_type = self.editor_data.selection_type.cycle();
     }
 
     /// set up editor data for movement/scaling and handle switching
     pub fn select_brush(&mut self, brush: usize) {
         if let Some(current) = self.editor_data.get_selected_brush() {
             if current == brush {
-                match self.editor_data.selection_type {
-                    SelectionType::Movement => {
-                        self.set_arrows_visible(false);
-                        self.set_boxes_visible(true);
-                        self.move_arrows_far();
-                    },
-                    SelectionType::Scaling => {
-                        self.set_arrows_visible(true);
-                        self.set_boxes_visible(false);
-                        self.move_boxes_far();
-                    },
-                    // _ => ()
-                } 
-                
-                self.editor_data.selection_type = self.editor_data.selection_type.cycle();
+                self.cycle_selection();
             } else {
                 self.editor_data.selection_type = SelectionType::Movement;
                 self.editor_data.selected_object = Some(Selection::Brush(brush));
@@ -294,11 +315,13 @@ impl World {
         }
 
         if let Some(current) = self.editor_data.get_selected_model() {
-            if current != model {
+            if current == model {
+                self.cycle_selection();
+            } else {
                 self.editor_data.selection_type = SelectionType::Movement;
                 self.editor_data.selected_object = Some(Selection::Model(model));
                 self.set_boxes_visible(false);
-                self.move_boxes_far();
+                self.move_boxes_far();          
             }
         } else {
             self.editor_data.selection_type = SelectionType::Movement;
@@ -353,12 +376,14 @@ impl World {
         let mut model_transform = Matrix4::identity();
         if let Renderable::Brush(_, origin, _, _) = &mut brush {
             model_transform = model_transform * Matrix4::from_translation(*origin);
-            *origin = Vector3::zero()
+            *origin = Vector3::zero();
         }
 
         let model = Model::new(true, model_transform, vec![brush]);
 
-        self.insert_model(model)
+        let index = self.insert_model(model);
+        self.recalculate_colliders(index);
+        index
     }
 
     fn toggle_hide_model(&mut self, index: usize) {
@@ -508,32 +533,41 @@ impl World {
         self.editor_data.selected_object = None;
     }
 
+    /// Insert colliders, insert model into scene, find extents, insert components
     fn pre_insert_model(&mut self, model: &mut Model) {
         model.insert_colliders(self);
         model.renderable_indices = self.scene.insert_model(model);
 
-        let mut extents: Option<parry3d::bounding_volume::Aabb> = None;
+        model.calculate_extents();
 
-        for renderable in model.render.iter() {
-            if let Some(aabb) = renderable.get_extents() {
-                if let Some(extents) = &mut extents {
-                    extents.merge(&aabb);
-                } else {
-                    extents = Some(aabb);
-                }
-            }
-        }
+        //let mut extents: Option<parry3d::bounding_volume::Aabb> = None;
 
-        if model.extents.is_none() {
-            model.extents = extents.map(|aabb| {
-                let center = aabb.center();
-                let half_extents = aabb.half_extents();
-                (
-                    vec3(center.x, center.y, center.z),
-                    vec3(half_extents.x, half_extents.y, half_extents.z)
-                )
-            });
-        }
+        // let extents = compose_extents(
+        //     model.render.iter().filter_map(|r| r.get_extents())
+        // );
+
+        // model.extents = Some(model.extents.map_or(extents, |e| compose_extents(vec![e, extents])));
+
+        // for renderable in model.render.iter() {
+        //     if let Some(aabb) = renderable.get_extents() {
+        //         if let Some(extents) = &mut extents {
+        //             extents.merge(&aabb);
+        //         } else {
+        //             extents = Some(aabb);
+        //         }
+        //     }
+        // }
+
+        // if model.extents.is_none() {
+        //     model.extents = extents.map(|aabb| {
+        //         let center = aabb.center();
+        //         let half_extents = aabb.half_extents();
+        //         (
+        //             vec3(center.x, center.y, center.z),
+        //             vec3(half_extents.x, half_extents.y, half_extents.z)
+        //         )
+        //     });
+        // }
 
         for i in 0..model.components.len() {
             Component::on_insert(i, model, self);
@@ -542,7 +576,7 @@ impl World {
 
     pub fn insert_model(&mut self, mut model: Model) -> usize {
         for light in model.lights.iter() {
-            let position = light.0 + (model.transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+            let position = light.0 + common::translation(model.transform);// (model.transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
             self.scene.point_lights[light.1].position = position;
         }
 
@@ -589,7 +623,7 @@ impl World {
         }
     }
 
-    /// This also removes the point light from the model
+    /// This also removes the point light from the model TODO: this breaks on level load
     pub fn remove_point_light(&mut self, light: usize) {    
         let mut removed = false;
         for model in self.models.iter_mut().flatten() {
@@ -631,10 +665,69 @@ impl World {
             // this counts on the transform of self.internal.brushes being identity
             let transform = Matrix4::from_translation(*origin) * Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z);
             self.scene.static_meshes.get_mut(&name).unwrap()[self.models[self.internal.brushes].as_ref().unwrap().renderable_indices[brush_index]].transform = transform;
-            self.update_colliders(self.internal.brushes);
+            self.recalculate_colliders(self.internal.brushes);
         } else {
             panic!("Non-brush in internal brush model");
         }
+    }
+
+    /// scale a model on an anchor
+    fn scale_model_anchored_nonuniform(&mut self, index: usize, new_scale: Vector3<f32>, anchor: Vector3<f32>, axis: Vector3<f32>) {
+        let model = self.models[index].take().unwrap();
+
+        let old_extent = model.extents.unwrap().1.dot(axis).abs();
+        let new_extent = new_scale.dot(axis).abs();
+        let scale_factor = (vec3_all(1.0) - axis) + axis * (new_extent / old_extent);
+
+        let previous_pos = translation(model.transform);
+        let new_transform = 
+            Matrix4::from_translation(previous_pos) *
+            Matrix4::from_translation(anchor) * 
+            Matrix4::from_nonuniform_scale(scale_factor.x, scale_factor.y, scale_factor.z) * 
+            Matrix4::from_translation(-anchor) *
+            mat4_remove_translation(model.transform);
+
+        self.models[index] = Some(model);
+        self.set_model_transform(index, new_transform);
+        self.models[index].as_mut().unwrap().extents = self.models[index].as_ref().unwrap().extents.map(|mut e| { e.1 = new_scale; e });
+    }
+
+    fn transform_model_colliders(&mut self, index: usize, transform: Matrix4<f32>) {
+        let mut model = self.models[index].take().unwrap();
+        
+        for collider in model.colliders.iter_mut() {
+            if let Some(collider) = collider {
+                self.physical_scene.colliders[*collider].as_mut().unwrap().set_transform(transform);
+            }
+        }
+
+        self.models[index] = Some(model);
+    }
+
+    /// this will take the same vector you pass into the nonuniform function and pass the scale factor onto all axes
+    fn scale_model_anchored(&mut self, index: usize, new_scale: Vector3<f32>, anchor: Vector3<f32>, axis: Vector3<f32>) {
+        let model = self.models[index].take().unwrap();
+        let old_scale = model.extents.unwrap().1;
+
+        let old_extent = model.extents.unwrap().1.dot(axis).abs();
+        let new_extent = new_scale.dot(axis).abs();
+        let scale_factor = new_extent / old_extent;
+
+        let previous_pos = translation(model.transform);
+        let new_transform =
+            Matrix4::from_translation(previous_pos) *
+            Matrix4::from_translation(anchor) *
+            Matrix4::from_scale(scale_factor) *
+            Matrix4::from_translation(-anchor) *
+            mat4_remove_translation(model.transform);
+        let applied_scale = old_scale * scale_factor;
+
+        self.models[index] = Some(model);
+
+        self.transform_model_colliders(index, new_transform);
+
+        self.set_model_transform(index, new_transform);
+        self.models[index].as_mut().unwrap().extents = self.models[index].as_ref().unwrap().extents.map(|mut e| { e.1 = applied_scale; e });
     }
 
     /// Returns the new brush index
@@ -658,13 +751,14 @@ impl World {
         println!("{:?}", self.models[self.internal.brushes].as_ref().unwrap().render);
     }
 
+    /// This places the brush inside the internal brushes model instead of making a new model for each brush
     pub fn insert_brush(&mut self, brush: Renderable) -> usize {
         match brush {
             Renderable::Brush(ref material, position, size, _) => {
                 let model = self.models.get_mut(self.internal.brushes).unwrap().as_mut().unwrap();
-                let model_position: Vector3<f32> = (model.transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+                // let model_position: Vector3<f32> = (model.transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
                 let properties = self.scene.materials.get(material).unwrap().physical_properties;
-                let mut collider = Collider::cuboid(position + model_position, size, Vector3::zero());
+                let mut collider = Collider::cuboid(position, size, Vector3::zero(), model.transform);
                 collider.physical_properties = properties;
                 collider.renderable = Some(model.render.len());
                 collider.model = Some(self.internal.brushes);
@@ -716,29 +810,77 @@ impl World {
         self.set_model_transform(self.internal.arrow_nz, Matrix4::from_translation(position - vec3(0.0, 0.0, scale.z)) * Matrix4::from_axis_angle(Vector3::unit_x(), Rad(-f32::consts::PI / 2.0)) * Matrix4::from_scale(0.5));
     }
 
-    fn adorn_arrows_model(&mut self, model: usize) {
-        let (mut position, half_extents) = self.models[model].as_ref().unwrap().extents.unwrap_or((vec3(0.0, 0.0, 0.0), vec3(0.5, 0.5, 0.5)));
-        position += (self.models[model].as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
-        let scale = half_extents + vec3(1.0, 1.0, 1.0);
+    fn position_boxes(&mut self, position: Vector3<f32>, scale: Vector3<f32>) {
+        self.set_model_transform(self.internal.box_px, Matrix4::from_translation(position + vec3(scale.x, 0.0, 0.0)) * Matrix4::from_scale(0.25));
+        self.set_model_transform(self.internal.box_nx, Matrix4::from_translation(position - vec3(scale.x, 0.0, 0.0)) * Matrix4::from_scale(0.25));
+        self.set_model_transform(self.internal.box_py, Matrix4::from_translation(position + vec3(0.0, scale.y, 0.0)) * Matrix4::from_scale(0.25));
+        self.set_model_transform(self.internal.box_ny, Matrix4::from_translation(position - vec3(0.0, scale.y, 0.0)) * Matrix4::from_scale(0.25));
+        self.set_model_transform(self.internal.box_pz, Matrix4::from_translation(position + vec3(0.0, 0.0, scale.z)) * Matrix4::from_scale(0.25));
+        self.set_model_transform(self.internal.box_nz, Matrix4::from_translation(position - vec3(0.0, 0.0, scale.z)) * Matrix4::from_scale(0.25));
+    }
 
-        self.position_arrows(position, scale);
+    pub fn move_arrows_far(&mut self) {
+        for i in 0..self.internal.arrows.len() {
+            self.set_model_transform(self.internal.arrows[i], Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
+        }
+    }
+
+    pub fn move_boxes_far(&mut self) {
+        for i in 0..self.internal.boxes.len() {
+            self.set_model_transform(self.internal.boxes[i], Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
+        }
+    }
+
+    pub fn set_arrows_visible(&mut self, visible: bool) {
+        for i in 0..self.internal.arrows.len() {
+            self.set_model_visible(self.internal.arrows[i], visible);
+        }
+    }
+
+    pub fn set_boxes_visible(&mut self, visible: bool) {
+        for i in 0..self.internal.boxes.len() {
+            self.set_model_visible(self.internal.boxes[i], visible);
+        }
+    }
+
+    fn adorn_model(&mut self, model: usize, selection_type: SelectionType) {
+        let (mut position, half_extents) = self.models[model].as_ref().unwrap().extents.unwrap_or((vec3_zero(), vec3_all(0.5)));
+        position += (self.models[model].as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+        let mut scale = half_extents + vec3_all(1.0);
+
+        match selection_type {
+            SelectionType::Movement => self.position_arrows(position, scale),
+            SelectionType::Scaling => {
+                scale -= vec3_all(0.8);
+                self.position_boxes(position, scale);
+            }
+        }
 
         self.editor_data.selection_box_visible = true;
         self.editor_data.selection_box_pos = position;
         self.editor_data.selection_box_scale = half_extents;
     }
 
-    fn adorn_arrows_brush(&mut self, brush: usize) {
-        let (position, scale) = self.get_brush_adornment_transform(brush);
+    fn adorn_brush(&mut self, brush: usize, selection_type: SelectionType) {
+        let (position, mut scale) = self.get_brush_adornment_transform(brush);
 
-        self.position_arrows(position, scale);
+        match selection_type {
+            SelectionType::Movement => {
+                self.position_arrows(position, scale);
+                self.editor_data.selection_box_scale = scale - vec3_all(1.0);
+            },
+            SelectionType::Scaling => {
+                scale -= vec3_all(0.8);
+                self.position_boxes(position, scale);
+                self.editor_data.selection_box_scale = scale - vec3_all(0.2);
+            }
+        }
     
         self.editor_data.selection_box_visible = true;
         self.editor_data.selection_box_pos = position;
-        self.editor_data.selection_box_scale = scale - vec3(1.0, 1.0, 1.0);
     }
 
-    fn adorn_arrows_multiple(&mut self, multiple: &Vec<Selection>) {
+    fn adorn_multiple(&mut self, multiple: &Vec<Selection>, selection_type: SelectionType) {
         let (position, half_extents) = common::compose_extents(
             multiple.iter().map(|a| match a {
                 Selection::Brush(index) => { 
@@ -755,9 +897,15 @@ impl World {
                 _ => panic!("multiple selection within multiple selection")
             })
         );
-        let scale = half_extents + vec3(1.0, 1.0, 1.0);
+        let mut scale = half_extents + vec3_all(1.0);
 
-        self.position_arrows(position, scale);
+        match selection_type {
+            SelectionType::Movement => self.position_arrows(position, scale),
+            SelectionType::Scaling => {
+                scale -= vec3_all(0.8);
+                self.position_boxes(position, scale);
+            }
+        }
 
         self.editor_data.selection_box_visible = true;
         self.editor_data.selection_box_pos = position;
@@ -779,40 +927,6 @@ impl World {
         }
     }
 
-    fn adorn_boxes_brush(&mut self, brush: usize) {
-        let (position, mut scale) = self.get_brush_adornment_transform(brush);
-        scale -= vec3(0.8, 0.8, 0.8);
-
-        self.set_model_transform(self.internal.box_px, Matrix4::from_translation(position + vec3(scale.x, 0.0, 0.0)) * Matrix4::from_scale(0.25));
-        self.set_model_transform(self.internal.box_nx, Matrix4::from_translation(position - vec3(scale.x, 0.0, 0.0)) * Matrix4::from_scale(0.25));
-        self.set_model_transform(self.internal.box_py, Matrix4::from_translation(position + vec3(0.0, scale.y, 0.0)) * Matrix4::from_scale(0.25));
-        self.set_model_transform(self.internal.box_ny, Matrix4::from_translation(position - vec3(0.0, scale.y, 0.0)) * Matrix4::from_scale(0.25));
-        self.set_model_transform(self.internal.box_pz, Matrix4::from_translation(position + vec3(0.0, 0.0, scale.z)) * Matrix4::from_scale(0.25));
-        self.set_model_transform(self.internal.box_nz, Matrix4::from_translation(position - vec3(0.0, 0.0, scale.z)) * Matrix4::from_scale(0.25));
-
-        self.editor_data.selection_box_visible = true;
-        self.editor_data.selection_box_pos = position;
-        self.editor_data.selection_box_scale = scale - vec3(0.2, 0.2, 0.2);
-    }
-
-    pub fn move_arrows_far(&mut self) {
-        self.set_model_transform(self.internal.arrow_px, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.arrow_nx, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.arrow_py, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.arrow_ny, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.arrow_pz, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.arrow_nz, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-    }
-
-    pub fn move_boxes_far(&mut self) {
-        self.set_model_transform(self.internal.box_px, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.box_nx, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.box_py, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.box_ny, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.box_pz, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-        self.set_model_transform(self.internal.box_nz, Matrix4::from_translation(vec3(0.0, -1000.0, 0.0)));
-    }
-
     fn get_brush_adornment_transform(&self, brush_index: usize) -> (Vector3<f32>, Vector3<f32>) {
         let brushes = self.models.get(self.internal.brushes).unwrap().as_ref().unwrap();
         let brush = brushes.render.get(brush_index).unwrap();
@@ -827,24 +941,6 @@ impl World {
         self.internal.internal_ids.remove(self.internal.internal_ids.iter().position(|i| *i == self.internal.brushes).expect("Brushes model was not present"));
         self.internal.brushes = self.insert_model(model);
         self.internal.internal_ids.push(self.internal.brushes);
-    }
-
-    pub fn set_arrows_visible(&mut self, visible: bool) {
-        self.set_model_visible(self.internal.arrow_nx, visible);
-        self.set_model_visible(self.internal.arrow_ny, visible);
-        self.set_model_visible(self.internal.arrow_nz, visible);
-        self.set_model_visible(self.internal.arrow_px, visible);
-        self.set_model_visible(self.internal.arrow_py, visible);
-        self.set_model_visible(self.internal.arrow_pz, visible);
-    }
-
-    pub fn set_boxes_visible(&mut self, visible: bool) {
-        self.set_model_visible(self.internal.box_nx, visible);
-        self.set_model_visible(self.internal.box_ny, visible);
-        self.set_model_visible(self.internal.box_nz, visible);
-        self.set_model_visible(self.internal.box_px, visible);
-        self.set_model_visible(self.internal.box_py, visible);
-        self.set_model_visible(self.internal.box_pz, visible);
     }
 
     pub fn debug_arrow(&mut self, start: Vector3<f32>, end: Vector3<f32>) {
@@ -920,9 +1016,10 @@ impl World {
                 self.set_brush_origin(*brush, new_origin);
             },
             Selection::Model(model) => {
-                let transform = self.get_model_transform(*model).unwrap();
-                let current_origin = (transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
-                let new_transform = Matrix4::from_translation(new_origin - current_origin) * transform;
+                let new_transform = Matrix4::from_translation(new_origin) * common::mat4_remove_translation(self.get_model_transform(*model).unwrap());
+                // let transform = self.get_model_transform(*model).unwrap();
+                // let current_origin = (transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz();
+                // let new_transform = Matrix4::from_translation(new_origin - current_origin) * transform;
                 self.set_model_transform(*model, new_transform);
             },
             Selection::Multiple(_) => unreachable!()
@@ -968,38 +1065,32 @@ impl World {
         }
     }
 
-    fn scale_along_axis(&mut self, model_origin: Vector3<f32>, model_scale: Vector3<f32>, mouse_ray: (Vector3<f32>, Vector3<f32>), axis: Vector3<f32>, plane: Vector3<f32>, axis_func: fn(Vector3<f32>) -> f32) {
+    fn scale_along_axis(&mut self, model_origin: Vector3<f32>, model_scale: Vector3<f32>, uniform: bool, mouse_ray: (Vector3<f32>, Vector3<f32>), axis: Vector3<f32>, plane: Vector3<f32>, axis_func: fn(Vector3<f32>) -> f32) {
         let d = -model_origin.dot(plane);
         let t = -((mouse_ray.0.dot(plane) + d) / mouse_ray.1.dot(plane));
 
         if t > 0.0 {
+            // Intersection with mouse ray and selection plane
             let intersection = mouse_ray.0 + mouse_ray.1 * t;
 
             match self.editor_data.init_drag_along_plane {
                 Some(pos) => {
                     let diff = intersection - pos;
-                    let along_axis = common::round_to(axis_func(diff), self.editor_data.increment);
+                    let mut along_axis = common::round_to(axis_func(diff), self.editor_data.increment);
+                    if !matches!(self.editor_data.selected_object, Some(Selection::Brush(_))) {
+                        along_axis /= 2.0;
+                    }
                     if along_axis.abs_diff_ne(&self.editor_data.drag_distance.unwrap(), EPSILON) {
                         let old_drag_distance = self.editor_data.drag_distance.unwrap();
                         self.editor_data.drag_distance = Some(along_axis);
-                        let (new_scale, new_origin) = if self.editor_data.drag_object_sign.unwrap() {
-                            let mut new_scale = self.editor_data.drag_object_scale.unwrap() + axis * along_axis;
+                        let axis_sign = if self.editor_data.drag_object_sign.unwrap() { 1.0f32 } else { -1.0 };
+                        let (new_scale, new_origin) = {
+                            let mut new_scale = self.editor_data.drag_object_scale.unwrap() + axis * along_axis * axis_sign;
                             let mut new_origin = self.editor_data.drag_object_origin.unwrap() + (axis * along_axis / 2.0);
 
                             if axis_func(new_scale) < self.editor_data.increment {
                                 self.editor_data.drag_distance = Some(old_drag_distance);
-                                new_scale = self.editor_data.drag_object_scale.unwrap() + axis * old_drag_distance;
-                                new_origin = self.editor_data.drag_object_origin.unwrap() + (axis * old_drag_distance / 2.0);
-                            }
-
-                            (new_scale, new_origin)
-                        } else {
-                            let mut new_scale = self.editor_data.drag_object_scale.unwrap() - axis * along_axis;
-                            let mut new_origin = self.editor_data.drag_object_origin.unwrap() + (axis * along_axis / 2.0);
-
-                            if axis_func(new_scale) < self.editor_data.increment {
-                                self.editor_data.drag_distance = Some(old_drag_distance);
-                                new_scale = self.editor_data.drag_object_scale.unwrap() - axis * old_drag_distance;
+                                new_scale = self.editor_data.drag_object_scale.unwrap() + axis * old_drag_distance * axis_sign;
                                 new_origin = self.editor_data.drag_object_origin.unwrap() + (axis * old_drag_distance / 2.0);
                             }
 
@@ -1010,11 +1101,19 @@ impl World {
                             Selection::Brush(brush) => {
                                 self.set_brush_origin_scale(*brush, new_origin, Some(new_scale));
                             },
-                            _ => todo!()
+                            Selection::Model(model) => {
+                                if uniform {
+                                    self.scale_model_anchored(*model, new_scale, axis.mul_element_wise(model_scale) * -axis_sign, axis);
+                                } else {
+                                    self.scale_model_anchored_nonuniform(*model, new_scale, axis.mul_element_wise(model_scale) * -axis_sign, axis);
+                                }
+                            },
+                            Selection::Multiple(_) => todo!()
                         }
                     }
                 },
                 None => {
+                    // Initialize drag start pos
                     self.editor_data.init_drag_along_plane = Some(intersection);
                     self.editor_data.drag_distance = Some(0.0);
                     self.editor_data.drag_object_origin = Some(model_origin);
@@ -1097,6 +1196,25 @@ impl World {
             self.set_model_visible(*model, *visible);
         }
 
+        // Change selection type with number keys
+        if self.editor_data.selected_object.is_some() {
+            if input.get_key_just_pressed(Key::Character("1".into())) {
+                if self.editor_data.selection_type != SelectionType::Movement {
+                    self.editor_data.selection_type = SelectionType::Movement;
+                    self.set_boxes_visible(false);
+                    self.move_boxes_far();
+                    self.set_arrows_visible(true);
+                }
+            } else if input.get_key_just_pressed(Key::Character("2".into())) {
+                if self.editor_data.selection_type != SelectionType::Scaling {
+                    self.editor_data.selection_type = SelectionType::Scaling;
+                    self.set_arrows_visible(false);
+                    self.move_arrows_far();
+                    self.set_boxes_visible(true);
+                }
+            }
+        }
+
         let mut selection = self.editor_data.selected_object.take();
         let mut selection_changed = false;
 
@@ -1109,30 +1227,21 @@ impl World {
                         selection_changed = true;
                     } else {
                         match self.editor_data.selection_type {
-                            SelectionType::Movement => {
-                                self.adorn_arrows_brush(*brush);
-                            },
-                            SelectionType::Scaling => {
-                                self.adorn_boxes_brush(*brush);
-                            },
-                            // _ => ()
+                            SelectionType::Movement => self.adorn_brush(*brush, SelectionType::Movement),
+                            SelectionType::Scaling => self.adorn_brush(*brush, SelectionType::Scaling),
                         }
                     }
                 },
                 Selection::Model(model) => {
                     match self.editor_data.selection_type {
-                        SelectionType::Movement => {
-                            self.adorn_arrows_model(*model);
-                        },
-                        _ => ()
+                        SelectionType::Movement => self.adorn_model(*model, SelectionType::Movement),
+                        SelectionType::Scaling => self.adorn_model(*model, SelectionType::Scaling),
                     }
                 },
                 Selection::Multiple(multiple) => {
                     match self.editor_data.selection_type {
-                        SelectionType::Movement => {
-                            self.adorn_arrows_multiple(multiple);
-                        },
-                        _ => ()
+                        SelectionType::Movement => self.adorn_multiple(multiple, SelectionType::Movement),
+                        SelectionType::Scaling => self.adorn_multiple(multiple, SelectionType::Scaling),
                     }
                 }
             }
@@ -1243,8 +1352,10 @@ impl World {
                         (pos, (scale - vec3(1.0, 1.0, 1.0)) * 2.0)
                     },
                     Selection::Model(model) => {
-                        // model_scale goes unused for now
-                        ((self.models.get(*model).unwrap().as_ref().unwrap().transform * vec4(0.0, 0.0, 0.0, 1.0)).xyz(), Vector3::zero())
+                        (
+                            common::translation(self.models[*model].as_ref().unwrap().transform) + self.models[*model].as_ref().unwrap().extents.unwrap().0, 
+                            self.models[*model].as_ref().unwrap().extents.unwrap().1
+                        )
                     },
                     Selection::Multiple(_) => {
                         (self.editor_data.selection_box_pos, self.editor_data.selection_box_scale)
@@ -1261,10 +1372,11 @@ impl World {
                         }
                     },
                     SelectionType::Scaling => {
+                        let uniform = input.get_key_pressed(Key::Named(NamedKey::Shift));
                         match drag {
-                            DragAxis::X => self.scale_along_axis(model_origin, model_scale, mouse_ray, Vector3::unit_x(), self.editor_data.drag_plane.unwrap(), |v| v.x),
-                            DragAxis::Y => self.scale_along_axis(model_origin, model_scale, mouse_ray, Vector3::unit_y(), self.editor_data.drag_plane.unwrap(), |v| v.y),
-                            DragAxis::Z => self.scale_along_axis(model_origin, model_scale, mouse_ray, Vector3::unit_z(), self.editor_data.drag_plane.unwrap(), |v| v.z),
+                            DragAxis::X => self.scale_along_axis(model_origin, model_scale, uniform, mouse_ray, Vector3::unit_x(), self.editor_data.drag_plane.unwrap(), |v| v.x),
+                            DragAxis::Y => self.scale_along_axis(model_origin, model_scale, uniform, mouse_ray, Vector3::unit_y(), self.editor_data.drag_plane.unwrap(), |v| v.y),
+                            DragAxis::Z => self.scale_along_axis(model_origin, model_scale, uniform, mouse_ray, Vector3::unit_z(), self.editor_data.drag_plane.unwrap(), |v| v.z),
                         }
                     },
                     // _ => ()
@@ -1344,13 +1456,22 @@ impl Renderable {
         }
     }
 
-    pub fn get_extents(&self) -> Option<parry3d::bounding_volume::Aabb> {
+    pub fn get_parry_extents(&self) -> Option<parry3d::bounding_volume::Aabb> {
         match self {
             Self::Brush(_, pos, extents, _) => {
                 Some(parry3d::bounding_volume::Aabb::from_half_extents(
                     parry3d::na::Point3::new(pos.x, pos.y, pos.z), 
                     parry3d::na::Vector3::new(extents.x / 2.0, extents.y / 2.0, extents.z / 2.0)
                 ))
+            },
+            _ => None
+        }
+    }
+
+    pub fn get_extents(&self) -> Option<(Vector3<f32>, Vector3<f32>)> {
+        match self {
+            Self::Brush(_, pos, extents, _) => {
+                Some((*pos, extents / 2.0))
             },
             _ => None
         }
@@ -1366,6 +1487,24 @@ impl Renderable {
 pub enum ModelCollider {
     Cuboid { offset: Vector3<f32>, half_extents: Vector3<f32> },
     Multiple { colliders: Vec<ModelCollider> }
+}
+
+impl ModelCollider {
+    /// this does clone the collider
+    pub fn flatten(&self) -> Vec<ModelCollider> {
+        match self {
+            Self::Cuboid { .. } => vec![self.clone()],
+            Self::Multiple { colliders } => colliders.clone()
+        }
+    }
+
+    /// this works for individual colliders only
+    pub fn get_extents(&self) -> Option<(Vector3<f32>, Vector3<f32>)> {
+        match self {
+            Self::Cuboid { offset, half_extents } => Some((*offset, *half_extents)),
+            _ => None
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1440,6 +1579,18 @@ impl Model {
 
     pub fn origin(&self) -> Vector3<f32> {
         vec3(self.transform.w.x, self.transform.w.y, self.transform.w.z)
+    }
+
+    pub fn calculate_extents(&mut self) {
+        let mut extents = compose_extents(
+            self.render.iter().filter_map(|r| r.get_extents())
+        );
+        if let Some(insert_collider) = &self.insert_collider {
+            let mut collider_extents = insert_collider.flatten().iter().filter_map(|c| c.get_extents()).collect::<Vec<_>>();
+            collider_extents.push(extents);
+            extents = compose_extents(collider_extents);
+        }
+        self.extents = Some(extents);
     }
 
     pub fn mobile(mut self) -> Self {

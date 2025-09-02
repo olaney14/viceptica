@@ -980,7 +980,14 @@ pub mod implement {
                         ui.text(ox + 10, oy + 20, "Hello Everyone\nI will be talking today\n\"Hahahaha\"\n - Me");
                         ui.text(ox + 10, oy + 80, FONT_CHARS);
 
-                        let mut y = oy + 100;
+                        ui.frame(ox + 8, oy + 100, 200, 38);
+                            if ui.image_button(input, 2, 2, 196, 36, (0, 0), (1, 1), "evil_pixel") {
+                                world.editor_data.show_colliders = !world.editor_data.show_colliders;
+                            }
+                            ui.text(4, 8, "Toggle show colliders");
+                        ui.pop();
+
+                        let mut y = oy + 200;
                         for (name, texture) in textures.textures.iter() {
                             ui.text(ox + 10, y, name);
                             y += 15;

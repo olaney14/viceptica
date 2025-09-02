@@ -474,6 +474,25 @@ impl Scene {
         gl.enable(glow::DEPTH_TEST);
     }
 
+    pub unsafe fn debug_render_box(&self, transform: Matrix4<f32>, color: Vector3<f32>, box_vao: NativeVertexArray, programs: &mut ProgramBank, gl: &glow::Context) {
+        gl.disable(glow::DEPTH_TEST);
+        gl.line_width(2.0);
+
+        let lines_program = programs.get_mut("lines").unwrap();
+        gl.use_program(Some(lines_program.inner));
+        gl.bind_vertex_array(Some(box_vao));
+
+        lines_program.uniform_3f32("color", color, gl);
+        lines_program.uniform_matrix4f32("view", self.camera.view, gl);
+        lines_program.uniform_matrix4f32("projection", self.camera.projection, gl);
+        lines_program.uniform_matrix4f32("model", transform, gl);
+
+        gl.draw_elements(glow::LINES, 24, glow::UNSIGNED_SHORT, 0);
+        gl.bind_vertex_array(None);
+
+        gl.enable(glow::DEPTH_TEST);
+    }
+
 
     #[inline]
     unsafe fn render_single_mesh(&self, data: &MobileRenderData, textures: &TextureBank, program: &mut Program, material: &Material, mesh: &Mesh, gl: &glow::Context) {
