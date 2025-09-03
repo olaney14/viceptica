@@ -4,7 +4,6 @@ use std::{collections::HashMap, sync::LazyLock};
 use cgmath::{point3, vec2, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, SquareMatrix, Transform, Vector3, Zero};
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
 use serde::{Deserialize, Serialize};
-use winapi::um::gl;
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
 use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::{Texture, TextureBank}, ui, world::{self, Model, Renderable, World}};
@@ -221,7 +220,8 @@ pub struct Scene {
     pub skybox_vao: Option<NativeVertexArray>,
     pub window_size: (u32, u32),
     pub ui_vao: Option<NativeVertexArray>,
-    pub show_hidden_objects: bool
+    pub show_hidden_objects: bool,
+    pub applicable_materials: Vec<String>
 }
 
 impl Scene {
@@ -232,7 +232,7 @@ impl Scene {
         programs.load_by_name_vf("lines", gl).unwrap();
         programs.load_by_name_vf("skybox", gl).unwrap();
         self.add_default_materials();
-        world::load_brushes(textures, meshes, self, gl);
+        self.applicable_materials = world::load_brushes(textures, meshes, self, gl);
         // billboards
         meshes.add(Mesh::create_square(1.0, 1.0, 1.0, gl), "quad");
         // textures.load_cubemap_by_name("field", gl).unwrap();
@@ -776,7 +776,8 @@ impl Scene {
             billboards: HashMap::new(),
             window_size: (640 * 2, 480 * 2),
             ui_vao: None,
-            show_hidden_objects: false
+            show_hidden_objects: false,
+            applicable_materials: Vec::new()
         }
     }
 

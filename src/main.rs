@@ -21,7 +21,6 @@ mod collision;
 mod component;
 
 const MS_PER_FRAME: u64 = 8;
-// const DEBUG_DRAW_COLLIDERS: bool = true;
 
 fn main() {
     let (mut gl, gl_surface, gl_context, window, event_loop) = unsafe { window::create_gl_context() };

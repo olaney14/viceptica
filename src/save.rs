@@ -1,7 +1,7 @@
 use cgmath::{Matrix4, SquareMatrix, Vector3, Zero};
 use serde::{Deserialize, Serialize};
 
-use crate::{collision, component::Component, mesh::{self, MeshBank}, render::{self, DirLight, Environment, Skybox}, shader::ProgramBank, texture::TextureBank, world::{self, Model, World}};
+use crate::{collision::{self, DEFAULT_CONTROL, DEFAULT_FRICTION, DEFAULT_JUMP}, component::Component, mesh::{self, MeshBank}, render::{self, DirLight, Environment, Skybox}, shader::ProgramBank, texture::TextureBank, world::{self, Model, World}};
 
 #[derive(Deserialize, Serialize)]
 pub struct BrushData {
@@ -343,4 +343,28 @@ impl World {
 
         world
     }
+}
+
+#[derive(Deserialize)]
+pub struct BrushMaterialsFile {
+    pub materials: Vec<BrushMaterialData> 
+}
+
+fn default_specular() -> String { String::from("magic_pixel") }
+fn default_friction() -> f32 { DEFAULT_FRICTION }
+fn default_control() -> f32 { DEFAULT_CONTROL }
+fn default_jump() -> f32 { DEFAULT_JUMP }
+
+#[derive(Deserialize, Debug)]
+pub struct BrushMaterialData {
+    pub name: String,
+    pub diffuse: String,
+    #[serde(default="default_specular")]
+    pub specular: String,
+    #[serde(default="default_friction")]
+    pub friction: f32,
+    #[serde(default="default_control")]
+    pub control: f32,
+    #[serde(default="default_jump")]
+    pub jump: f32
 }

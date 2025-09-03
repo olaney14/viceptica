@@ -47,7 +47,9 @@ void main() {
     vec3 norm = normalize(normal);
     vec3 viewDir = normalize(viewPos - fragPos);
 
-    FragColor = vec4(vertexColor, 1.0f);
+    vec4 diffusePx = texture(material.diffuse, TexCoord);
+    FragColor = vec4(vertexColor * vec3(diffusePx), 1.0f);
+    // FragColor = vec4(vertexColor, 1.0f);
 
     if (fullbright == 0) {
         vec3 result = calcDirLight(dirLight, norm, viewDir);
@@ -56,7 +58,7 @@ void main() {
             result += calcPointLight(pointLights[i], norm, fragPos, viewDir);
         }
 
-        FragColor *= vec4(result, 1.0);
+        FragColor = vec4(result * vertexColor, 1.0);
     }
 }
 

@@ -206,12 +206,6 @@ impl Model {
                 collider.foreground = self.foreground;
                 collider.solid = self.solid;
 
-                // if let Some(extents) = &mut extents {
-                //     extents.merge(&collider.bounding);
-                // } else {
-                //     extents = Some(collider.bounding);
-                // }
-
                 self.colliders.push(Some(world.physical_scene.add_collider(collider)));
             },
             ModelCollider::Multiple { colliders } => {
@@ -220,13 +214,6 @@ impl Model {
                 }
             }
         }
-
-        // if let Some(extents) = extents {
-        //     self.extents = Some((
-        //         vec3(extents.center().x, extents.center().y, extents.center().z) - model_position,
-        //         vec3(extents.half_extents().x, extents.half_extents().y, extents.half_extents().z)
-        //     ));
-        // }
     }
 
     pub fn insert_colliders(&mut self, world: &mut World) {
@@ -265,14 +252,6 @@ impl World {
             ModelCollider::Cuboid { offset, half_extents } => {
                 let collider_index = self.models[model].as_ref().unwrap().colliders[i].unwrap();
                 self.physical_scene.colliders[collider_index].as_mut().unwrap().set_transform(model_transform);
-                // let mut collider = Collider::cuboid(*offset, *half_extents * 2.0, Vector3::zero(), model_transform);
-                // collider.physical_properties = PhysicalProperties::default();
-                // collider.renderable = None;
-                // collider.model = Some(model);
-                // collider.foreground = self.models[model].as_ref().unwrap().foreground;
-                // collider.solid = self.models[model].as_ref().unwrap().solid;
-                // let collider_index = self.models[model].as_ref().unwrap().colliders[i].unwrap();
-                // self.physical_scene.colliders[collider_index] = Some(collider);
             },
             ModelCollider::Multiple { colliders } => {
                 for (j, collider) in colliders.iter().enumerate() {
@@ -345,12 +324,16 @@ pub struct PhysicalProperties {
     pub jump: f32
 }
 
+pub const DEFAULT_FRICTION: f32 = 0.8;
+pub const DEFAULT_CONTROL: f32 = 1.0;
+pub const DEFAULT_JUMP: f32 = 1.0;
+
 impl Default for PhysicalProperties {
     fn default() -> Self {
         Self {
-            friction: 0.80,
-            control: 1.0,
-            jump: 1.0
+            friction: DEFAULT_FRICTION,
+            control: DEFAULT_CONTROL,
+            jump: DEFAULT_JUMP
         }
     }
 }

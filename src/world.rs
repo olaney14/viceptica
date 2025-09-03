@@ -1,37 +1,11 @@
 use core::f32;
-use std::path::PathBuf;
+use std::{fs, io::Read, path::PathBuf};
 
 use cgmath::{vec3, vec4, AbsDiffEq, ElementWise, EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation, SquareMatrix, Vector3, Zero};
-use glow::{HasContext, NativeVertexArray};
-use parry3d::bounding_volume::BoundingVolume;
+use glow::NativeVertexArray;
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common::{self, compose_extents, mat4_remove_translation, translation, vec3_all, vec3_div_compwise, vec3_zero}, component::Component, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, Scene}, save::LevelData, shader::ProgramBank, texture::TextureBank};
-
-pub const BRUSH_TEXTURES: [&str; 8] = [
-    "concrete",
-    "end_sky",
-    "evilwatering",
-    "pillows_old_floor",
-    "sky",
-    "sparkle",
-    "watering",
-    "container"
-];
-
-pub const APPLICABLE_MATERIALS: [&str; 11] = [
-    "concrete",
-    "end_sky",
-    "evilwatering",
-    "pillows_old_floor",
-    "sky",
-    "sparkle",
-    "watering",
-    "container",
-    "ice",
-    "tar",
-    "slime"
-];
+use crate::{collision::{Collider, PhysicalProperties, PhysicalScene, RaycastResult}, common::{self, compose_extents, mat4_remove_translation, translation, vec3_all, vec3_div_compwise, vec3_zero}, component::Component, input::Input, mesh::{flags, Mesh, MeshBank}, render::{self, Camera, Scene}, save::{self, LevelData}, shader::ProgramBank, texture::TextureBank};
 
 pub const DEFAULT_INCREMENT: f32 = 0.25;
 
@@ -150,32 +124,31 @@ pub struct InternalModels {
     pub boxes: Vec<usize>
 }
 
-pub unsafe fn load_brushes(textures: &mut TextureBank, meshes: &mut MeshBank, scene: &mut Scene, gl: &glow::Context) {
-    for texture in BRUSH_TEXTURES.iter() {
-        scene.load_material_diff_spec(texture, texture, &format!("{}_specular", texture), textures, gl);
-        meshes.add(Mesh::create_material_cube(texture, gl), &format!("Brush_{}", texture));
+pub unsafe fn load_brushes(textures: &mut TextureBank, meshes: &mut MeshBank, scene: &mut Scene, gl: &glow::Context) -> Vec<String> {
+    let mut brush_types_file = fs::File::open("res/data/brush_types.json").expect("Could not find brush types data file");
+    let mut brush_types_src = String::new();
+    brush_types_file.read_to_string(&mut brush_types_src).unwrap();
+    let brush_types = serde_json::from_str::<save::BrushMaterialsFile>(&brush_types_src).expect("Failed to parse brush types data file");
+    let mut applicable_types = Vec::new();
+
+    for brush_type in brush_types.materials.iter() {
+        scene.load_material_diff_spec_phys(
+            &brush_type.name,
+            &brush_type.diffuse,
+            &brush_type.specular,
+            PhysicalProperties {
+                friction: brush_type.friction,
+                control: brush_type.control,
+                jump: brush_type.jump
+            },
+            textures,
+            gl
+        );
+        meshes.add(Mesh::create_material_cube(&brush_type.diffuse, gl), &format!("Brush_{}", brush_type.name));
+        applicable_types.push(brush_type.name.to_owned());
     }
 
-    scene.load_material_diff_spec_phys("ice", "ice", "ice_specular", PhysicalProperties {
-        friction: 0.99,
-        control: 0.05,
-        jump: 1.0
-    }, textures, gl);
-    meshes.add(Mesh::create_material_cube("ice", gl), "Brush_ice");
-
-    scene.load_material_diff_spec_phys("tar", "tar", "tar_specular", PhysicalProperties {
-        friction: 0.25,
-        control: 0.03,
-        jump: 0.1
-    }, textures, gl);
-    meshes.add(Mesh::create_material_cube("tar", gl), "Brush_tar");
-
-    scene.load_material_diff_spec_phys("slime", "slime", "tar_specular", PhysicalProperties {
-        friction: 0.5,
-        control: 0.2,
-        jump: 2.0
-    }, textures, gl);
-    meshes.add(Mesh::create_material_cube("slime", gl), "Brush_slime");
+    applicable_types
 }
 
 impl World {
@@ -539,35 +512,6 @@ impl World {
         model.renderable_indices = self.scene.insert_model(model);
 
         model.calculate_extents();
-
-        //let mut extents: Option<parry3d::bounding_volume::Aabb> = None;
-
-        // let extents = compose_extents(
-        //     model.render.iter().filter_map(|r| r.get_extents())
-        // );
-
-        // model.extents = Some(model.extents.map_or(extents, |e| compose_extents(vec![e, extents])));
-
-        // for renderable in model.render.iter() {
-        //     if let Some(aabb) = renderable.get_extents() {
-        //         if let Some(extents) = &mut extents {
-        //             extents.merge(&aabb);
-        //         } else {
-        //             extents = Some(aabb);
-        //         }
-        //     }
-        // }
-
-        // if model.extents.is_none() {
-        //     model.extents = extents.map(|aabb| {
-        //         let center = aabb.center();
-        //         let half_extents = aabb.half_extents();
-        //         (
-        //             vec3(center.x, center.y, center.z),
-        //             vec3(half_extents.x, half_extents.y, half_extents.z)
-        //         )
-        //     });
-        // }
 
         for i in 0..model.components.len() {
             Component::on_insert(i, model, self);

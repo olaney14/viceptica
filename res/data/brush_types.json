@@ -1,0 +1,73 @@
+{
+    "materials": [
+        {
+            "name": "concrete",
+            "diffuse": "concrete",
+            "specular": "concrete_specular"
+        },
+        {
+            "name": "end_sky",
+            "diffuse": "end_sky",
+            "specular": "end_sky_specular"
+        },
+        {
+            "name": "evilwatering",
+            "diffuse": "evilwatering",
+            "specular": "evilwatering_specular"
+        },
+        {
+            "name": "pillows_old_floor",
+            "diffuse": "pillows_old_floor",
+            "specular": "pillows_old_floor_specular"
+        },
+        {
+            "name": "sky",
+            "diffuse": "sky",
+            "specular": "sky_specular"
+        },
+        {
+            "name": "sparkle",
+            "diffuse": "sparkle",
+            "specular": "sparkle_specular"
+        },
+        {
+            "name": "watering",
+            "diffuse": "watering",
+            "specular": "watering_specular"
+        },
+        {
+            "name": "container",
+            "diffuse": "container",
+            "specular": "container_specular"
+        },
+        {
+            "name": "ice",
+            "diffuse": "ice",
+            "specular": "ice_specular",
+            "friction": 0.99,
+            "control": 0.05,
+            "jump": 1.0
+        },
+        {
+            "name": "tar",
+            "diffuse": "tar",
+            "specular": "tar_specular",
+            "friction": 0.25,
+            "control": 0.03,
+            "jump": 0.2
+        },
+        {
+            "name": "slime",
+            "diffuse": "slime",
+            "specular": "tar_specular",
+            "friction": 0.5,
+            "control": 0.2,
+            "jump": 2.0
+        },
+        {
+            "name": "rust",
+            "diffuse": "rust",
+            "specular": "rust_spec"
+        }
+    ]
+}

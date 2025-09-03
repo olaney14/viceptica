@@ -583,7 +583,7 @@ pub mod implement {
     use rfd::FileDialog;
     use winit::event::MouseButton;
 
-    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World, APPLICABLE_MATERIALS}};
+    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World}};
 
     const MATERIAL_FRAME_SIZE: u32 = 100;
 
@@ -1000,8 +1000,8 @@ pub mod implement {
                         let mut x = 0;
                         let mut y = 16;
 
-                        for (i, material) in APPLICABLE_MATERIALS.iter().enumerate() {
-                            let texture = textures.textures.get(*material).unwrap();
+                        for (i, material) in world.scene.applicable_materials.iter().enumerate() {
+                            let texture = textures.textures.get(material).unwrap();
                             ui.frame(x, y, MATERIAL_FRAME_SIZE, MATERIAL_FRAME_SIZE);
                             let draw_pos = MATERIAL_FRAME_SIZE / 2 - 32;
                             if ui.image_button(input, draw_pos as i32, draw_pos as i32, 64, 64, (0, 0), (texture.width, texture.height), material) {
