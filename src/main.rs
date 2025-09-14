@@ -16,6 +16,7 @@ mod common;
 mod render;
 mod shader;
 mod window;
+mod effects;
 mod texture;
 mod collision;
 mod component;
@@ -28,9 +29,17 @@ fn main() {
     let mut texture_bank = texture::TextureBank::new();
     let mut mesh_bank = mesh::MeshBank::new();
     let mut input = input::Input::new();
-    let mut world = world::World::new();
+    let mut world = world::World::new(&gl);
     let mut ui = ui::implement::VicepticaUI::new(&gl);
     world.scene.ui_vao = Some(ui.inner.vao);
+    world.scene.post_process.kernel = Some(effects::KernelEffect {
+        kernel: [
+            -4.0, -2.0, -1.0,
+            -2.0,  1.0,  2.0,
+             1.0,  2.0,  4.0
+        ],
+        offset: 1.0 / 30.0
+    });
     let opengl_debug = Arc::new(Mutex::new(Vec::new()));
 
     unsafe {
@@ -96,14 +105,15 @@ fn main() {
         ]
     ).with_component(Component::Door(component::Door::new(8.0, 3.75, 200))).insert_hidden();
 
-    unsafe { 
+    unsafe {
         world.scene.init(&mut texture_bank, &mut mesh_bank, &mut program_bank, &gl);
+        world.scene.post_process.resize((window::WINDOW_INIT_WIDTH as u32, window::WINDOW_INIT_HEIGHT as u32), &gl);
         world.editor_data.selection_box_vao = Some(mesh::create_selection_cube(&gl));
+
         world.insert_model(mobile);
         world.insert_model(billboard);
         world.insert_model(door);
         world.set_internal_brushes(brushes);
-        // world.insert_model(lights);
         world.set_arrows_visible(false);
         world.move_boxes_far();
         world.move_arrows_far();
@@ -260,43 +270,16 @@ fn main() {
                         world.scene.camera.update(&input, delta_time);
                         world.scene.update(&mut mesh_bank, &gl);
 
+                        world.scene.post_process.begin(&gl);
                         world.scene.render(&mesh_bank, &mut program_bank, &texture_bank, &gl);
                         if world.editor_data.show_colliders {
-                            for collider in world.physical_scene.colliders.iter() {
-                                if let Some(collider) = collider {
-                                    // skip player
-                                    if collider.model.is_none() { continue; }
-                                    let pos = vec3(collider.bounding.center().x, collider.bounding.center().y, collider.bounding.center().z);
-                                    let scale = vec3(collider.bounding.half_extents().x, collider.bounding.half_extents().y, collider.bounding.half_extents().z);
-                                    let model = 
-                                        Matrix4::from_translation(pos) *
-                                        Matrix4::from_nonuniform_scale(scale.x * 2.0, scale.y * 2.0, scale.z * 2.0);
-                                    world.scene.debug_render_box(model, vec3(1.0, 0.0, 0.0), world.editor_data.selection_box_vao.unwrap(), &mut program_bank, &gl);
-                                    match collider.shape {
-                                        ColliderShape::Cuboid(cuboid) => {
-                                            // let pos = vec3(collider.iso.translation.x, collider.iso.translation.y, collider.iso.translation.z);
-                                            let scale = vec3(cuboid.half_extents.x, cuboid.half_extents.y, cuboid.half_extents.z) * 2.0;
-                                            let tna = collider.iso.to_matrix();
-                                            let transform = Matrix4::new(
-                                                tna.m11, tna.m12, tna.m13, tna.m14,
-                                                tna.m21, tna.m22, tna.m23, tna.m24,
-                                                tna.m31, tna.m32, tna.m33, tna.m34,
-                                                tna.m41, tna.m42, tna.m43, tna.m44,
-                                            ).transpose() * Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z);
-                                            world.scene.debug_render_box(transform, vec3(0.4, 0.1, 0.8), world.editor_data.selection_box_vao.unwrap(), &mut program_bank, &gl);
-                                        }
-                                    }
-                                }
-                            }
+                            world.debug_render_colliders(&mut program_bank, &gl);
                         }
                         world.post_render(&mut program_bank, &gl);
+                        world.scene.post_process.end(&mut program_bank, &gl);
 
-                        for line in world.editor_data.show_debug.drain(..) {
-                            ui.show_debug(&line);
-                        }
-                        for line in opengl_debug.lock().unwrap().drain(..) {
-                            ui.show_debug(&line);
-                        }
+                        for line in world.editor_data.show_debug.drain(..) { ui.show_debug(&line); }
+                        for line in opengl_debug.lock().unwrap().drain(..) { ui.show_debug(&line); }
                         ui.render_and_update(&input, &mut texture_bank, &mut program_bank, &gl, &mut world);
 
                         gl_surface.swap_buffers(&gl_context).unwrap();
@@ -312,6 +295,7 @@ fn main() {
                             new_world.editor_data.save_to = world.editor_data.save_to.clone();
                             let window_size =  window.inner_size(); 
                             new_world.scene.camera.on_window_resized(window_size.width as f32, window_size.height as f32);
+                            new_world.scene.post_process.resize((window_size.width, window_size.height), &gl);
                             new_world.scene.window_size = (window_size.width, window_size.height);
                             new_world.scene.ui_vao = world.scene.ui_vao;
                             world = new_world;
@@ -378,6 +362,7 @@ fn main() {
                     WindowEvent::Resized(new_size) => unsafe {
                         gl.viewport(0, 0, new_size.width as i32, new_size.height as i32);
                         world.scene.camera.on_window_resized(new_size.width as f32, new_size.height as f32);
+                        world.scene.post_process.resize((new_size.width, new_size.height), &gl);
                         world.scene.window_size = (new_size.width, new_size.height);
                         ui.inner.screen_size = (new_size.width, new_size.height);
                     },

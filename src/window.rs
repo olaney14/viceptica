@@ -5,6 +5,9 @@ use glutin_winit::{DisplayBuilder, GlWindow};
 use raw_window_handle::HasRawWindowHandle;
 use winit::event_loop::EventLoop;
 
+pub const WINDOW_INIT_WIDTH: f32 = 640.0 * 2.0;
+pub const WINDOW_INIT_HEIGHT: f32 = 480.0 * 2.0;
+
 pub type ProgramContext = (glow::Context, glutin::surface::Surface<WindowSurface>, glutin::context::PossiblyCurrentContext, winit::window::Window, EventLoop<()>);
 
 // https://github.com/grovesNL/glow/blob/main/examples/hello/src/main.rs
@@ -12,7 +15,7 @@ pub unsafe fn create_gl_context() -> ProgramContext {
     let event_loop = winit::event_loop::EventLoopBuilder::new().build().unwrap();
     let window_builder = winit::window::WindowBuilder::new()
         .with_title("VICEPTICA")
-        .with_inner_size(winit::dpi::LogicalSize::new(640.0 * 2.0, 480.0 * 2.0));
+        .with_inner_size(winit::dpi::LogicalSize::new(WINDOW_INIT_WIDTH, WINDOW_INIT_HEIGHT));
 
     let template = ConfigTemplateBuilder::new()
         .with_stencil_size(8);

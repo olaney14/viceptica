@@ -42,6 +42,7 @@ uniform vec3 viewPos;
 
 vec3 calcDirLight(DirLight light, vec3 normal, vec3 viewDir);
 vec3 calcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir);
+vec3 applyFog(vec3 color, float dist);
 
 void main() {
     vec3 norm = normalize(normal);

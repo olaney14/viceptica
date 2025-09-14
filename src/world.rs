@@ -152,10 +152,10 @@ pub unsafe fn load_brushes(textures: &mut TextureBank, meshes: &mut MeshBank, sc
 }
 
 impl World {
-    pub fn new() -> Self {
+    pub fn new(gl: &glow::Context) -> Self {
         let mut world = Self {
             models: Vec::new(),
-            scene: Scene::new(),
+            scene: Scene::new(gl),
             player: Player::new(),
             physical_scene: PhysicalScene::new(),
             gravity: 15.0,

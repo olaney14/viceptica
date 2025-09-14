@@ -279,7 +279,7 @@ impl World {
     }
 
     pub unsafe fn from_save_data(data: LevelData, textures: &mut TextureBank, meshes: &mut MeshBank, programs: &mut ProgramBank, gl: &glow::Context) -> Self {
-        let mut world = world::World::new();
+        let mut world = world::World::new(gl);
         world.init(meshes, gl);
         for material in data.materials.iter() {
             if !world.scene.materials.contains_key(&material.name) {

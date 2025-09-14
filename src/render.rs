@@ -1,12 +1,12 @@
 use core::f32;
 use std::{collections::HashMap, sync::LazyLock};
 
-use cgmath::{point3, vec2, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix3, Matrix4, Point3, SquareMatrix, Transform, Vector3, Zero};
+use cgmath::{point3, vec2, vec3, Deg, ElementWise, EuclideanSpace, InnerSpace, Matrix, Matrix3, Matrix4, Point3, SquareMatrix, Transform, Vector3, Zero};
 use glow::{HasContext, NativeBuffer, NativeVertexArray};
 use serde::{Deserialize, Serialize};
 use winit::{event::MouseButton, keyboard::{Key, NamedKey}};
 
-use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::{Texture, TextureBank}, ui, world::{self, Model, Renderable, World}};
+use crate::{collision::PhysicalProperties, common::{self, normal_matrix}, effects, input::Input, mesh::{self, flags, Mesh, MeshBank}, shader::{self, Program, ProgramBank}, texture::{Texture, TextureBank}, ui, world::{self, Model, Renderable, World}};
 
 const HIDDEN_MASK_SIZE: f32 = 0.5;
 
@@ -221,7 +221,8 @@ pub struct Scene {
     pub window_size: (u32, u32),
     pub ui_vao: Option<NativeVertexArray>,
     pub show_hidden_objects: bool,
-    pub applicable_materials: Vec<String>
+    pub applicable_materials: Vec<String>,
+    pub post_process: effects::PostProcessing
 }
 
 impl Scene {
@@ -231,6 +232,7 @@ impl Scene {
         programs.load_by_name_vf("flat", gl).unwrap();
         programs.load_by_name_vf("lines", gl).unwrap();
         programs.load_by_name_vf("skybox", gl).unwrap();
+        programs.load_by_name_vf("screen", gl).unwrap();
         self.add_default_materials();
         self.applicable_materials = world::load_brushes(textures, meshes, self, gl);
         // billboards
@@ -760,7 +762,7 @@ impl Scene {
         }
     }
 
-    pub fn new() -> Self {
+    pub fn new(gl: &glow::Context) -> Self {
         Self {
             mobile_meshes: HashMap::new(),
             static_instance_buffers: HashMap::new(),
@@ -777,7 +779,8 @@ impl Scene {
             window_size: (640 * 2, 480 * 2),
             ui_vao: None,
             show_hidden_objects: false,
-            applicable_materials: Vec::new()
+            applicable_materials: Vec::new(),
+            post_process: unsafe { effects::PostProcessing::new(gl) }
         }
     }
 
@@ -986,6 +989,34 @@ impl World {
             gl.draw_elements(glow::LINES, 24, glow::UNSIGNED_SHORT, 0);
             gl.bind_vertex_array(None);
             gl.enable(glow::DEPTH_TEST);
+        }
+    }
+
+    pub unsafe fn debug_render_colliders(&self, programs: &mut ProgramBank, gl: &glow::Context) {
+        for collider in self.physical_scene.colliders.iter() {
+            if let Some(collider) = collider {
+                // skip player
+                if collider.model.is_none() { continue; }
+                let pos = vec3(collider.bounding.center().x, collider.bounding.center().y, collider.bounding.center().z);
+                let scale = vec3(collider.bounding.half_extents().x, collider.bounding.half_extents().y, collider.bounding.half_extents().z);
+                let model = 
+                    Matrix4::from_translation(pos) *
+                    Matrix4::from_nonuniform_scale(scale.x * 2.0, scale.y * 2.0, scale.z * 2.0);
+                self.scene.debug_render_box(model, vec3(1.0, 0.0, 0.0), self.editor_data.selection_box_vao.unwrap(), programs, gl);
+                match collider.shape {
+                    crate::ColliderShape::Cuboid(cuboid) => {
+                        let scale = vec3(cuboid.half_extents.x, cuboid.half_extents.y, cuboid.half_extents.z) * 2.0;
+                        let tna = collider.iso.to_matrix();
+                        let transform = Matrix4::new(
+                            tna.m11, tna.m12, tna.m13, tna.m14,
+                            tna.m21, tna.m22, tna.m23, tna.m24,
+                            tna.m31, tna.m32, tna.m33, tna.m34,
+                            tna.m41, tna.m42, tna.m43, tna.m44,
+                        ).transpose() * Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z);
+                        self.scene.debug_render_box(transform, vec3(0.4, 0.1, 0.8), self.editor_data.selection_box_vao.unwrap(), programs, gl);
+                    }
+                }
+            }
         }
     }
 }
