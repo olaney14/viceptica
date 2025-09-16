@@ -222,7 +222,8 @@ pub struct Scene {
     pub ui_vao: Option<NativeVertexArray>,
     pub show_hidden_objects: bool,
     pub applicable_materials: Vec<String>,
-    pub post_process: effects::PostProcessing
+    pub post_process: effects::PostProcessing,
+    pub world_default_effects: effects::DefaultEffects
 }
 
 impl Scene {
@@ -780,7 +781,8 @@ impl Scene {
             ui_vao: None,
             show_hidden_objects: false,
             applicable_materials: Vec::new(),
-            post_process: unsafe { effects::PostProcessing::new(gl) }
+            post_process: unsafe { effects::PostProcessing::new(gl) },
+            world_default_effects: effects::DefaultEffects::new()
         }
     }
 

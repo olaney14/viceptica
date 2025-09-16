@@ -3,11 +3,13 @@ use glow::{HasContext, NativeFramebuffer, NativeTexture, NativeVertexArray};
 
 use crate::shader::{Program, ProgramBank};
 
+#[derive(Clone)]
 pub struct KernelEffect {
     pub kernel: [f32; 9],
     pub offset: f32
 }
 
+#[derive(Clone)]
 pub struct FogEffect {
     pub color: Vector3<f32>,
     pub strength: f32,
@@ -22,6 +24,20 @@ pub struct PostProcessing {
     pub dummy_vao: NativeVertexArray,
     pub kernel: Option<KernelEffect>,
     pub fog: Option<FogEffect>
+}
+
+pub struct DefaultEffects {
+    pub kernel: Option<KernelEffect>,
+    pub fog: Option<FogEffect>
+}
+
+impl DefaultEffects {
+    pub fn new() -> Self {
+        Self {
+            kernel: None,
+            fog: None
+        }
+    }
 }
 
 impl PostProcessing {

@@ -1,9 +1,9 @@
 use std::mem;
 
-use cgmath::{vec3, EuclideanSpace, Matrix4, MetricSpace, Point3, Vector3};
+use cgmath::{vec3, EuclideanSpace, Matrix4, MetricSpace, Point3, Transform, Vector3};
 use serde::{Deserialize, Serialize};
 
-use crate::{common, world::{Model, Renderable, World}};
+use crate::{common, effects::{FogEffect, KernelEffect}, world::{Model, Renderable, World}};
 
 fn zero_vec_slice() -> [f32; 3] {
     [0.0; 3]
@@ -43,8 +43,8 @@ pub struct Trigger {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum TriggerType {
-    SetFogEffect { enabled: bool, color: Option<[f32; 3]>, strength: Option<f32>, max: Option<f32> },
-    SetKernelEffect { enabled: bool, kernel: Option<[f32; 9]>, offset: Option<f32> },
+    SetFogEffect { enabled: bool, color: [f32; 3], strength: f32, max: f32 },
+    SetKernelEffect { enabled: bool, kernel: [f32; 9], offset: f32 },
     Test { enter: String, update: String, exit: String }
 }
 
@@ -61,6 +61,17 @@ impl Trigger {
         if let Component::Trigger(trigger) = component {
             match &trigger.kind {
                 TriggerType::Test { enter, .. } => println!("{}", enter),
+                TriggerType::SetFogEffect { enabled, color, strength, max } => {
+                    if *enabled {
+                        world.scene.post_process.fog = Some(FogEffect {
+                            max: *max,
+                            strength: *strength,
+                            color: vec3(color[0], color[1], color[2])
+                        });
+                    } else {
+                        world.scene.post_process.fog = None;
+                    }
+                }
                 _ => ()
             }
         }
@@ -79,6 +90,9 @@ impl Trigger {
         if let Component::Trigger(trigger) = component {
             match &trigger.kind {
                 TriggerType::Test { exit, .. } => println!("{}", exit),
+                TriggerType::SetFogEffect { .. } => {
+                    world.scene.post_process.fog = world.scene.world_default_effects.fog.clone();
+                }
                 _ => ()
             }
         }
@@ -171,15 +185,17 @@ impl Component {
             },
             Component::Trigger(trigger) => {
                 // this was checked on insert
-                let (brush_origin, brush_extents) = 
+                let (mut brush_origin, mut brush_extents) = 
                     if let Renderable::Brush(_, origin, extents, _) = model.render[0] { 
                         (origin, extents) 
                     } else {
                         panic!("First (supposedly only) element in trigger model was not a brush");
                     };
+                brush_origin += common::translation(model.transform);
+                brush_extents = model.transform.transform_vector(brush_extents);
 
-                let min = (brush_origin - brush_extents / 2.0) + common::translation(model.transform);
-                let max = (brush_origin + brush_extents / 2.0) + common::translation(model.transform);
+                let min = (brush_origin - brush_extents / 2.0);
+                let max = (brush_origin + brush_extents / 2.0);
 
                 let within_brush = {
                     let pp = &world.scene.camera.pos;

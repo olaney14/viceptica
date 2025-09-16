@@ -5,7 +5,7 @@ use glow::{HasContext};
 use glutin::surface::GlSurface;
 use winit::{event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent}, keyboard::{Key, NamedKey}, platform::modifier_supplement::KeyEventExtModifierSupplement, window::CursorGrabMode};
 
-use crate::{collision::{ColliderShape, RaycastParameters}, component::Component, mesh::flags, render::CameraControlScheme, world::{Model, PlayerMovementMode, Renderable, World}};
+use crate::{collision::{ColliderShape, RaycastParameters}, component::{Component, Trigger, TriggerType}, mesh::flags, render::CameraControlScheme, world::{Model, PlayerMovementMode, Renderable, World}};
 
 mod ui;
 mod mesh;
@@ -32,14 +32,14 @@ fn main() {
     let mut world = world::World::new(&gl);
     let mut ui = ui::implement::VicepticaUI::new(&gl);
     world.scene.ui_vao = Some(ui.inner.vao);
-    world.scene.post_process.kernel = Some(effects::KernelEffect {
-        kernel: [
-            -4.0, -2.0, -1.0,
-            -2.0,  1.0,  2.0,
-             1.0,  2.0,  4.0
-        ],
-        offset: 1.0 / 1200.0
-    });
+    // world.scene.post_process.kernel = Some(effects::KernelEffect {
+    //     kernel: [
+    //         -4.0, -2.0, -1.0,
+    //         -2.0,  1.0,  2.0,
+    //          1.0,  2.0,  4.0
+    //     ],
+    //     offset: 1.0 / 1200.0
+    // });
     let opengl_debug = Arc::new(Mutex::new(Vec::new()));
 
     unsafe {
@@ -95,8 +95,13 @@ fn main() {
             Renderable::Brush("trigger".to_string(), vec3(0.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0), flags::EXTEND_TEXTURE)
         ]
     ).insert_hidden().non_solid().with_component(Component::Trigger(component::Trigger::new(
-        component::TriggerType::Test { enter: "Enter trigger".to_string(), update: "Inside trigger".to_string(), exit: "Exit trigger".to_string() }
-    )));
+        TriggerType::SetFogEffect { 
+            color: [0.1, 0.2, 0.2],
+            enabled: true,
+            max: 0.75,
+            strength: 64.0
+        }))
+    );
 
     unsafe { texture_bank.load_by_name("komari", &gl).unwrap(); }
     let billboard = Model::new(
