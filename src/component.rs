@@ -43,7 +43,11 @@ pub struct Trigger {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum TriggerType {
-    SetFogEffect { enabled: bool, color: [f32; 3], strength: f32, max: f32 },
+    SetFogEffect { 
+        enabled: bool, color: [f32; 3], strength: f32, max: f32, 
+        #[serde(skip)]
+        max_tween: f32
+    },
     SetKernelEffect { enabled: bool, kernel: [f32; 9], offset: f32 },
     Test { enter: String, update: String, exit: String }
 }
@@ -59,17 +63,25 @@ impl Trigger {
 
     pub fn on_enter(component: &mut Component, model: &mut Model, world: &mut World) {
         if let Component::Trigger(trigger) = component {
-            match &trigger.kind {
+            match &mut trigger.kind {
                 TriggerType::Test { enter, .. } => println!("{}", enter),
-                TriggerType::SetFogEffect { enabled, color, strength, max } => {
+                TriggerType::SetFogEffect { enabled, color, strength, max , max_tween} => {
+                    // if *enabled {
+                    //     world.scene.post_process.fog = Some(FogEffect {
+                    //         max: *max,
+                    //         strength: *strength,
+                    //         color: vec3(color[0], color[1], color[2])
+                    //     });
+                    // } else {
+                    //     world.scene.post_process.fog = None;
+                    // }
                     if *enabled {
+                        *max_tween = world.scene.post_process.fog.as_ref().map_or(0.0, |f| f.max);
                         world.scene.post_process.fog = Some(FogEffect {
-                            max: *max,
+                            max: *max_tween,
                             strength: *strength,
                             color: vec3(color[0], color[1], color[2])
                         });
-                    } else {
-                        world.scene.post_process.fog = None;
                     }
                 }
                 _ => ()
@@ -79,8 +91,25 @@ impl Trigger {
 
     pub fn update_inside(component: &mut Component, model: &mut Model, world: &mut World) {
         if let Component::Trigger(trigger) = component {
-            match &trigger.kind {
+            match &mut trigger.kind {
                 TriggerType::Test { update, .. } => println!("{}", update),
+                TriggerType::SetFogEffect { enabled, color, strength, max, max_tween } => {
+                    if *enabled {
+                        if !common::fuzzy_eq(*max, *max_tween, 0.011) {
+                            *max_tween += common::towards(*max_tween, *max, 0.01);
+
+                            if common::fuzzy_eq(*max, *max_tween, 0.011) {
+                                *max_tween = *max;
+                            }
+
+                            world.scene.post_process.fog = Some(FogEffect {
+                                max: *max_tween,
+                                strength: *strength,
+                                color: vec3(color[0], color[1], color[2])
+                            });
+                        }
+                    }
+                }
                 _ => ()
             }
         }
@@ -88,11 +117,37 @@ impl Trigger {
 
     pub fn on_exit(component: &mut Component, model: &mut Model, world: &mut World) {
         if let Component::Trigger(trigger) = component {
-            match &trigger.kind {
+            match &mut trigger.kind {
                 TriggerType::Test { exit, .. } => println!("{}", exit),
-                TriggerType::SetFogEffect { .. } => {
-                    world.scene.post_process.fog = world.scene.world_default_effects.fog.clone();
+                TriggerType::SetFogEffect { max_tween, .. } => {
+                    // *max_tween = world.scene.post_process.fog.as_ref().map_or(0.0, |f| f.max);
                 }
+                _ => ()
+            }
+        }
+    }
+
+    pub fn update_outside(component: &mut Component, model: &mut Model, world: &mut World) {
+        if let Component::Trigger(trigger) = component {
+            match &mut trigger.kind {
+                TriggerType::SetFogEffect { enabled, color, strength, max, max_tween } => {
+                    if *enabled {
+                        let world_target = world.scene.world_default_effects.fog.as_ref().map_or(0.0, |f| f.max);
+                        if !common::fuzzy_eq(*max_tween, world_target, 0.011) {
+                            *max_tween += common::towards(*max_tween, world_target, 0.01);
+
+                            if common::fuzzy_eq(*max, world_target, 0.011) {
+                                world.scene.post_process.fog = world.scene.world_default_effects.fog.clone();
+                            } else {
+                                world.scene.post_process.fog = Some(FogEffect {
+                                    max: *max_tween,
+                                    strength: *strength,
+                                    color: vec3(color[0], color[1], color[2])
+                                });
+                            }
+                        }
+                    }
+                },
                 _ => ()
             }
         }
@@ -213,6 +268,8 @@ impl Component {
                     if within_brush {
                         trigger.player_within = true;
                         Trigger::on_enter(&mut component, &mut model, world);
+                    } else {
+                        Trigger::update_outside(&mut component, &mut model, world);
                     }
                 }
             }

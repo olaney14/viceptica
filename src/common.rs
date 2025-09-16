@@ -92,3 +92,11 @@ pub fn vec3_zero() -> Vector3<f32> {
 pub fn vec3_div_compwise(a: Vector3<f32>, b: Vector3<f32>) -> Vector3<f32> {
     vec3(a.x / b.x, a.y / b.y, a.z / b.z)
 }
+
+pub fn towards(a: f32, b: f32, by: f32) -> f32 {
+    (b - a).signum() * by
+}
+
+pub fn fuzzy_eq(a: f32, b: f32, epsilon: f32) -> bool {
+    (a - b).abs() < epsilon
+}

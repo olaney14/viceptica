@@ -518,7 +518,9 @@ impl World {
         model.insert_colliders(self);
         model.renderable_indices = self.scene.insert_model(model);
 
-        model.calculate_extents();
+        if model.extents.is_none() {
+            model.calculate_extents();
+        }
 
         for i in 0..model.components.len() {
             Component::on_insert(i, model, self);

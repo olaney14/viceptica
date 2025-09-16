@@ -115,7 +115,7 @@ impl ProgramBank {
 
     pub unsafe fn load_by_name_vf(&mut self, name: &str, gl: &glow::Context) -> Result<(), Box<dyn Error>> {
         if self.programs.contains_key(name) {
-            eprintln!("Program was already loaded");
+            // eprintln!("Program was already loaded");
             return Ok(());
         }
 

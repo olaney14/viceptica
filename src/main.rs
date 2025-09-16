@@ -96,10 +96,11 @@ fn main() {
         ]
     ).insert_hidden().non_solid().with_component(Component::Trigger(component::Trigger::new(
         TriggerType::SetFogEffect { 
-            color: [0.1, 0.2, 0.2],
+            color: [0.8, 0.2, 0.2],
             enabled: true,
             max: 0.75,
-            strength: 64.0
+            strength: 64.0,
+            max_tween: 0.0
         }))
     );
 

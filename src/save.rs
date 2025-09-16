@@ -1,4 +1,4 @@
-use cgmath::{Matrix4, SquareMatrix, Vector3, Zero};
+use cgmath::{vec3, Matrix4, SquareMatrix, Vector3, Zero};
 use serde::{Deserialize, Serialize};
 
 use crate::{collision::{self, DEFAULT_CONTROL, DEFAULT_FRICTION, DEFAULT_JUMP}, component::Component, mesh::{self, MeshBank}, render::{self, DirLight, Environment, Skybox}, shader::ProgramBank, texture::TextureBank, world::{self, Model, World}};
@@ -149,6 +149,10 @@ pub struct PointLightData {
     color: [f32; 3]
 }
 
+fn dfalse() -> bool { false }
+fn dtrue() -> bool { true }
+fn default_extents() -> Option<([f32; 3], [f32; 3])> { None }
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct ModelData {
     transform: [[f32; 4]; 4],
@@ -159,7 +163,11 @@ pub struct ModelData {
     insert_colliders: ModelColliderData,
     renderables: Vec<ModelRenderableData>,
     #[serde(default="Vec::new")]
-    components: Vec<Component>
+    components: Vec<Component>,
+    #[serde(default="dfalse")]
+    hidden: bool,
+    #[serde(default="default_extents")]
+    extents: Option<([f32; 3], [f32; 3])>
 }
 
 impl ModelData {
@@ -173,6 +181,10 @@ impl ModelData {
         let mut model = world::Model::new(
             self.mobile, self.transform.into(), render
         );
+        model.solid = self.solid;
+        model.foreground = self.foreground;
+        model.hidden = self.hidden;
+        model.extents = self.extents.map(|e| (vec3(e.0[0], e.0[1], e.0[2]), vec3(e.1[0], e.1[1], e.1[2])));
 
         let model_collider = self.insert_colliders.as_model_collider();
         model.insert_collider = model_collider;
@@ -228,7 +240,9 @@ impl World {
                     lights,
                     insert_colliders,
                     renderables,
-                    components: model.components.clone()
+                    components: model.components.clone(),
+                    hidden: model.hidden,
+                    extents: model.extents.map(|e| ([e.0.x, e.0.y, e.0.z], [e.1.x, e.1.y, e.1.z]))
                 });
             }
         }
