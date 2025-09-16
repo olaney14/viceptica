@@ -3,7 +3,7 @@ use std::mem;
 use cgmath::{vec3, EuclideanSpace, Matrix4, MetricSpace, Point3, Vector3};
 use serde::{Deserialize, Serialize};
 
-use crate::{common, world::{Model, World}};
+use crate::{common, world::{Model, Renderable, World}};
 
 fn zero_vec_slice() -> [f32; 3] {
     [0.0; 3]
@@ -33,25 +33,92 @@ impl Door {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Trigger {
+    pub kind: TriggerType,
+    #[serde(skip)]
+    pub player_within: bool,
+    #[serde(skip)]
+    pub invalid: bool
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum TriggerType {
+    SetFogEffect { enabled: bool, color: Option<[f32; 3]>, strength: Option<f32>, max: Option<f32> },
+    SetKernelEffect { enabled: bool, kernel: Option<[f32; 9]>, offset: Option<f32> },
+    Test { enter: String, update: String, exit: String }
+}
+
+impl Trigger {
+    pub fn new(kind: TriggerType) -> Self {
+        Self {
+            invalid: true,
+            player_within: false,
+            kind
+        }
+    }
+
+    pub fn on_enter(component: &mut Component, model: &mut Model, world: &mut World) {
+        if let Component::Trigger(trigger) = component {
+            match &trigger.kind {
+                TriggerType::Test { enter, .. } => println!("{}", enter),
+                _ => ()
+            }
+        }
+    }
+
+    pub fn update_inside(component: &mut Component, model: &mut Model, world: &mut World) {
+        if let Component::Trigger(trigger) = component {
+            match &trigger.kind {
+                TriggerType::Test { update, .. } => println!("{}", update),
+                _ => ()
+            }
+        }
+    }
+
+    pub fn on_exit(component: &mut Component, model: &mut Model, world: &mut World) {
+        if let Component::Trigger(trigger) = component {
+            match &trigger.kind {
+                TriggerType::Test { exit, .. } => println!("{}", exit),
+                _ => ()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum Component {
     /// Marker for spawning the player
     Spawnpoint,
     /// goes up when the player near it
     Door(Door),
     /// The Rust Programming Language
-    Dummy
+    Dummy,
+    /// Behavior on entry, exit<br>
+    /// Trigger is expected to be placed on a model with a single brush inside
+    Trigger(Trigger)
 }
 
 impl Component {
     /// Called before the model is put into the scene
     pub fn on_insert(this: usize, model: &mut Model, world: &mut World) {
-        match model.components[this] {
+        match &mut model.components[this] {
             Component::Door(_) => {
                 if !model.mobile {
                     model.mobile = true;
                     world.editor_data.show_debug.push(String::from("made model mobile because it had a Door component"));
                 }
             },
+            Component::Trigger(trigger) => {
+                if model.render.len() != 1 {
+                    world.editor_data.show_debug.push(String::from("Expected only one element"));
+                    trigger.invalid = true;
+                } else if !matches!(model.render[0], Renderable::Brush(..)) {
+                    world.editor_data.show_debug.push(String::from("Singular element in trigger model was not brush"));
+                    trigger.invalid = true;
+                }
+                trigger.invalid = false;
+                trigger.player_within = false;
+            }
             _ => ()
         }
     }
@@ -101,6 +168,37 @@ impl Component {
             },
             Component::Dummy => {
                 world.editor_data.show_debug.push(String::from("Dummy component found in model"));
+            },
+            Component::Trigger(trigger) => {
+                // this was checked on insert
+                let (brush_origin, brush_extents) = 
+                    if let Renderable::Brush(_, origin, extents, _) = model.render[0] { 
+                        (origin, extents) 
+                    } else {
+                        panic!("First (supposedly only) element in trigger model was not a brush");
+                    };
+
+                let min = (brush_origin - brush_extents / 2.0) + common::translation(model.transform);
+                let max = (brush_origin + brush_extents / 2.0) + common::translation(model.transform);
+
+                let within_brush = {
+                    let pp = &world.scene.camera.pos;
+                    pp.x > min.x && pp.y > min.y && pp.z > min.z && pp.x < max.x && pp.y < max.y && pp.z < max.z
+                };
+
+                if trigger.player_within {
+                    if !within_brush {
+                        trigger.player_within = false;
+                        Trigger::on_exit(&mut component, &mut model, world);
+                    } else {
+                        Trigger::update_inside(&mut component, &mut model, world);
+                    }
+                } else {
+                    if within_brush {
+                        trigger.player_within = true;
+                        Trigger::on_enter(&mut component, &mut model, world);
+                    }
+                }
             }
             _ => ()
         }

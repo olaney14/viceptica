@@ -41,6 +41,11 @@
             "specular": "container_specular"
         },
         {
+            "name": "trigger",
+            "diffuse": "trigger",
+            "specular": "magic_pixel"
+        },
+        {
             "name": "ice",
             "diffuse": "ice",
             "specular": "ice_specular",

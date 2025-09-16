@@ -38,7 +38,7 @@ fn main() {
             -2.0,  1.0,  2.0,
              1.0,  2.0,  4.0
         ],
-        offset: 1.0 / 30.0
+        offset: 1.0 / 1200.0
     });
     let opengl_debug = Arc::new(Mutex::new(Vec::new()));
 
@@ -78,7 +78,7 @@ fn main() {
             Renderable::Brush("ice".to_string(), vec3(0.0, -5.0, 0.0), vec3(20.0, 1.0, 20.0), flags::EXTEND_TEXTURE),
             Renderable::Brush("concrete".to_string(), vec3(0.0, -4.0, 0.0), vec3(8.0, 1.0, 8.0), flags::EXTEND_TEXTURE),
             Renderable::Brush("pillows_old_floor".to_string(), vec3(5.0, 0.0, 0.0), vec3(1.0, 4.0, 4.0), flags::EXTEND_TEXTURE),
-            Renderable::Brush("end_sky".to_string(), vec3(0.0, 5.0, 0.0), vec3(2.0, 2.0, 2.0), flags::EXTEND_TEXTURE),
+            // Renderable::Brush("end_sky".to_string(), vec3(0.0, 5.0, 0.0), vec3(2.0, 2.0, 2.0), flags::EXTEND_TEXTURE),
             Renderable::Brush("evilwatering".to_string(), vec3(3.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0), flags::EXTEND_TEXTURE),
             Renderable::Brush("container".to_string(), vec3(-5.0, 0.0, 0.0), vec3(1.0, 10.0, 10.0), flags::EXTEND_TEXTURE),
             Renderable::Brush("sky".to_string(), vec3(2.0, 0.0, 0.0), vec3(1.0, 7.0, 7.0), flags::EXTEND_TEXTURE),
@@ -87,6 +87,16 @@ fn main() {
             Renderable::Brush("watering".to_string(), vec3(0.0, -4.5, 0.0), vec3(10.0, 1.0, 10.0), flags::EXTEND_TEXTURE)
         ]
     );
+
+    let trigger = Model::new(
+        true,
+        Matrix4::from_translation(vec3(0.0, 5.0, 0.0)),
+        vec![
+            Renderable::Brush("trigger".to_string(), vec3(0.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0), flags::EXTEND_TEXTURE)
+        ]
+    ).insert_hidden().non_solid().with_component(Component::Trigger(component::Trigger::new(
+        component::TriggerType::Test { enter: "Enter trigger".to_string(), update: "Inside trigger".to_string(), exit: "Exit trigger".to_string() }
+    )));
 
     unsafe { texture_bank.load_by_name("komari", &gl).unwrap(); }
     let billboard = Model::new(
@@ -113,6 +123,7 @@ fn main() {
         world.insert_model(mobile);
         world.insert_model(billboard);
         world.insert_model(door);
+        world.insert_model(trigger);
         world.set_internal_brushes(brushes);
         world.set_arrows_visible(false);
         world.move_boxes_far();

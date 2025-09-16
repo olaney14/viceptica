@@ -365,22 +365,29 @@ impl World {
         self.models[index].as_mut().unwrap().hidden = !new_visible_state;
     }
 
-    fn toggle_hide_brush(&mut self, index: usize) {
+    fn toggle_hide_brush(&mut self, index: usize) -> usize {
         let unique = self.make_brush_unique(index);
         self.toggle_hide_model(unique);
+        unique
     }
 
     pub fn toggle_hide_selection(&mut self) {
         if self.editor_data.selected_object.is_some() {
-            let selection = self.editor_data.selected_object.take().unwrap();
-            match &selection {
+            let mut selection = self.editor_data.selected_object.take().unwrap();
+            match &mut selection {
                 Selection::Model(index) => self.toggle_hide_model(*index),
-                Selection::Brush(index) => self.toggle_hide_brush(*index),
+                Selection::Brush(index) => { 
+                    let unique = self.toggle_hide_brush(*index);
+                    selection = Selection::Model(unique);
+                },
                 Selection::Multiple(multiple) => {
                     for selection in multiple {
                         match selection {
                             Selection::Model(index) => self.toggle_hide_model(*index),
-                            Selection::Brush(index) => self.toggle_hide_brush(*index),
+                            Selection::Brush(index) => { 
+                                let unique = self.toggle_hide_brush(*index);
+                                *selection = Selection::Model(unique);
+                            },
                             _ => unreachable!()
                         }
                     }
@@ -1166,7 +1173,9 @@ impl World {
             match selected {
                 Selection::Brush(brush) => {
                     if let Some(material) = self.editor_data.apply_material.take() {
+                        // for brush in self.models[self.internal.brushes].as_ref().unwrap().render.iter() { println!("{:?}", brush) }
                         let new_index = self.set_brush_material(*brush, material);
+                        // for brush in self.models[self.internal.brushes].as_ref().unwrap().render.iter() { println!("{:?}", brush) }
                         self.select_brush(new_index);
                         selection_changed = true;
                     } else {
