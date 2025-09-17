@@ -13,6 +13,7 @@ mod save;
 mod input;
 mod world;
 mod common;
+mod prefab;
 mod render;
 mod shader;
 mod window;
@@ -95,14 +96,22 @@ fn main() {
             Renderable::Brush("trigger".to_string(), vec3(0.0, 0.0, 0.0), vec3(2.0, 2.0, 2.0), flags::EXTEND_TEXTURE)
         ]
     ).insert_hidden().non_solid().with_component(Component::Trigger(component::Trigger::new(
-        TriggerType::SetFogEffect { 
-            color: [0.8, 0.2, 0.2],
+        TriggerType::SetKernelEffect {
             enabled: true,
-            max: 0.75,
-            strength: 64.0,
-            max_tween: 0.0
+            kernel: [
+                 1.0, -1.0,  1.0,
+                -1.0,  1.0, -1.0,
+                 1.0, -1.0,  1.0
+            ],
+            offset: 1.0 / 130.0
         }))
     );
+
+    let prefab_source = serde_json::from_str(include_str!(
+        "../res/data/prefabs/test_prefab.json"
+    )).unwrap();
+    let prefab_test = prefab::UserPrefab::parse(&prefab_source).unwrap();
+    unsafe { prefab_test.load_resources(&mut texture_bank, &mut mesh_bank, &gl); }
 
     unsafe { texture_bank.load_by_name("komari", &gl).unwrap(); }
     let billboard = Model::new(
@@ -130,6 +139,7 @@ fn main() {
         world.insert_model(billboard);
         world.insert_model(door);
         world.insert_model(trigger);
+        world.insert_model(prefab_test.as_model(&mesh_bank));
         world.set_internal_brushes(brushes);
         world.set_arrows_visible(false);
         world.move_boxes_far();

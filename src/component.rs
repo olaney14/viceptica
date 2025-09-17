@@ -83,8 +83,15 @@ impl Trigger {
                             color: vec3(color[0], color[1], color[2])
                         });
                     }
+                },
+                TriggerType::SetKernelEffect { enabled, kernel, offset } => {
+                    if *enabled {
+                        world.scene.post_process.kernel = Some(KernelEffect {
+                            kernel: *kernel,
+                            offset: *offset
+                        })
+                    }
                 }
-                _ => ()
             }
         }
     }
@@ -119,9 +126,9 @@ impl Trigger {
         if let Component::Trigger(trigger) = component {
             match &mut trigger.kind {
                 TriggerType::Test { exit, .. } => println!("{}", exit),
-                TriggerType::SetFogEffect { max_tween, .. } => {
-                    // *max_tween = world.scene.post_process.fog.as_ref().map_or(0.0, |f| f.max);
-                }
+                TriggerType::SetKernelEffect { .. } => {
+                    world.scene.post_process.kernel = world.scene.world_default_effects.kernel.clone();
+                },
                 _ => ()
             }
         }

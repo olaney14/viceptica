@@ -1,0 +1,44 @@
+{
+	"hidden": true,
+	"solid": false,
+	"foreground": false,
+	"mobile": true,
+	"position": [0.0, 0.0, 0.0],
+	"scale": [1.0, 1.0, 1.0],
+	"rotation": [0.0, 0.0, 0.0],
+	"__COMMENT__": "You can define these three or a transform matrix, the matrix takes precedence",
+	"transform": [
+		[1.0, 0.0, 0.0, 0.0],
+		[0.0, 1.0, 0.0, 0.0],
+		[0.0, 0.0, 1.0, 0.0],
+		[0.0, 0.0, 0.0, 1.0]
+	],
+	"render": [
+		{
+			"type": "brush",
+			"origin": [0.0, 0.0, 0.0],
+			"scale": [1.0, 1.0, 1.0],
+			"material": "trigger",
+			"flags": ["extend_texture", "fullbright"]
+		},
+		{
+			"type": "obj",
+			"obj": "machine"
+		},
+		{
+			"type": "billboard",
+			"image": "komari",
+			"position": [0.0, 0.0, 0.0]
+		}
+	],
+	"components": [
+		{
+			"type": "trigger",
+			"trigger": "fog",
+			"enabled": true,
+			"color": [0.8, 0.2, 0.2],
+			"strength": 64.0,
+			"max": 0.75
+		}
+	]
+}
