@@ -97,7 +97,8 @@ pub struct World {
     pub load_new: Option<LevelData>,
     /// this many frames will be ignored
     pub freeze: u32,
-    pub do_game_logic: bool
+    pub do_game_logic: bool,
+    pub loaded_models: Vec<String>
 }
 
 #[derive(Default)]
@@ -187,7 +188,8 @@ impl World {
             },
             load_new: None,
             freeze: 0,
-            do_game_logic: true
+            do_game_logic: true,
+            loaded_models: Vec::new()
         };
 
         world.player.collider = world.physical_scene.add_collider(Collider::cuboid(Vector3::zero(), vec3(0.5, 2.0, 0.5), Vector3::zero(), Matrix4::identity()));

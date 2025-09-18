@@ -1,0 +1,23 @@
+{
+	"hidden": true,
+	"solid": false,
+	"mobile": true,
+	"render": [
+		{
+			"type": "brush",
+			"origin": [0.0, 0.0, 0.0],
+			"scale": [1.0, 1.0, 1.0],
+			"material": "trigger",
+			"flags": ["extend_texture", "fullbright"]
+		}
+	],
+	"components": [
+		{
+			"type": "trigger",
+			"trigger": "fog",
+			"color": [0.0, 0.0, 0.0],
+			"strength": 32.0,
+			"max": 1.0
+		}
+	]
+}

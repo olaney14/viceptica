@@ -32,7 +32,9 @@ pub struct LevelData {
     gravity: f32,
     air_friction: f32,
     materials: Vec<MaterialData>,
-    environment: Option<EnvironmentData>
+    environment: Option<EnvironmentData>,
+    #[serde(default="Vec::new")]
+    loaded_models: Vec<String>
 }
 
 #[derive(Deserialize, Serialize)]
@@ -167,7 +169,7 @@ pub struct ModelData {
     #[serde(default="dfalse")]
     hidden: bool,
     #[serde(default="default_extents")]
-    extents: Option<([f32; 3], [f32; 3])>
+    extents: Option<([f32; 3], [f32; 3])>,
 }
 
 impl ModelData {
@@ -282,13 +284,15 @@ impl World {
             }
         };
 
+        println!("{:?}", self.loaded_models);
         LevelData {
             air_friction: self.air_friction,
             gravity: self.gravity,
             brushes,
             models,
             materials,
-            environment: Some(environment)
+            environment: Some(environment),
+            loaded_models: self.loaded_models.clone()
         }
     }
 
@@ -308,7 +312,19 @@ impl World {
             }
         }
 
+        for model in data.loaded_models.iter() {
+            // TODO performance
+            meshes.load_from_obj(model, gl);
+        }
+
         for model in data.models.iter() {
+            for render in model.renderables.iter() {
+                match render {
+                    ModelRenderableData::Billboard(texture, ..) => { textures.load_by_name(texture, gl); }, 
+                    _ => ()
+                }
+            }
+
             model.insert(&mut world);
         }
 

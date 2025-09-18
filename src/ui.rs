@@ -583,7 +583,7 @@ pub mod implement {
     use rfd::FileDialog;
     use winit::event::MouseButton;
 
-    use crate::{common::{self, round_to}, input::Input, mesh::flags, render::PointLight, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World}};
+    use crate::{common::{self, round_to}, input::Input, mesh::{flags, MeshBank}, render::PointLight, shader::ProgramBank, texture::TextureBank, ui::{FrameInteraction, SliderInteraction, FONT_CHARS, UI}, world::{Model, Renderable, World}};
 
     const MATERIAL_FRAME_SIZE: u32 = 100;
 
@@ -695,7 +695,7 @@ pub mod implement {
             textures.load_by_name("important", gl).unwrap();
         }
 
-        pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, world: &mut World) {
+        pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, meshes: &mut MeshBank, programs: &mut ProgramBank, gl: &glow::Context, world: &mut World) {
             if let Some(light) = world.editor_data.open_light_ui.take() {
                 self.on_light_selected(light, world);
             }
@@ -703,7 +703,7 @@ pub mod implement {
             if self.play_mode {
                 // todo
             } else {
-                self.editor.render_and_update(input, textures, programs, gl, &mut self.inner, world);
+                self.editor.render_and_update(input, textures, meshes, programs, gl, &mut self.inner, world);
             }
 
             if let Some(light_window) = self.editor.find_first_window_of_type(EditorWindowType::LightEditor) {
@@ -833,7 +833,7 @@ pub mod implement {
             ui.image_button(input, x, y, 32, 32, (tx, ty), (32, 32), "ui_buttons")
         }
 
-        pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, programs: &mut ProgramBank, gl: &glow::Context, ui: &mut UI, world: &mut World) {            
+        pub unsafe fn render_and_update(&mut self, input: &Input, textures: &mut TextureBank, meshes: &mut MeshBank, programs: &mut ProgramBank, gl: &glow::Context, ui: &mut UI, world: &mut World) {            
             ui.begin();
 
             if !self.debug_output.is_empty() {
@@ -864,6 +864,7 @@ pub mod implement {
             }
 
             let rounded_camera_pos = vec3(round_to(world.player.position.x, 0.25), round_to(world.player.position.y, 0.25), round_to(world.player.position.z, 0.25));
+            let mut debug_messages = Vec::new();
 
             if Self::draw_ui_button(ui, input, 0, 200, 0, 0) {
                 world.insert_brush(Renderable::Brush(
@@ -903,6 +904,23 @@ pub mod implement {
             if Self::draw_ui_button(ui, input, 0, 200 + 128 + 64, 0, 32) {
                 world.toggle_hide_selection();
             }
+            if Self::draw_ui_button(ui, input, 0, 200 + 128 + 96, 32, 32) {
+                let load_file = FileDialog::new()
+                    .add_filter("JSON files", &["json"])
+                    .set_directory("/res/levels/")
+                    .set_title("Load Prefab")
+                    .pick_file();
+                if let Some(path) = load_file {
+                    match world.insert_prefab_from_file(textures, meshes, gl, path) {
+                        Result::Ok(index) => {
+                            world.set_model_transform(index, Matrix4::from_translation(rounded_camera_pos) * world.models[index].as_ref().unwrap().transform);
+                        },
+                        Result::Err(msg) => {
+                            debug_messages.push(msg);
+                        }
+                    }
+                }
+            }
 
             if let Some((x, y, w, h)) = self.selection_box {
                 ui.selection_frame(x, y, w, h);
@@ -915,7 +933,6 @@ pub mod implement {
             let mut close = None;
             let mut scroll = None;
             let mut contents_clicked = None;
-            let mut debug_messages = Vec::new();
 
             for (i, window) in self.windows.iter_mut().enumerate() {
                 if window.dragging {

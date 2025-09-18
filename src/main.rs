@@ -33,14 +33,6 @@ fn main() {
     let mut world = world::World::new(&gl);
     let mut ui = ui::implement::VicepticaUI::new(&gl);
     world.scene.ui_vao = Some(ui.inner.vao);
-    // world.scene.post_process.kernel = Some(effects::KernelEffect {
-    //     kernel: [
-    //         -4.0, -2.0, -1.0,
-    //         -2.0,  1.0,  2.0,
-    //          1.0,  2.0,  4.0
-    //     ],
-    //     offset: 1.0 / 1200.0
-    // });
     let opengl_debug = Arc::new(Mutex::new(Vec::new()));
 
     unsafe {
@@ -51,8 +43,8 @@ fn main() {
                 debug_clone.lock().unwrap().push(format!("[OpenGL, high severity] {}", msg));
                 println!("[OpenGL, high severity] {}", msg);
             } else if severity == glow::DEBUG_SEVERITY_MEDIUM {
-                // debug_clone.lock().unwrap().push(format!("[OpenGL, medium severity] {}", msg));
-                // println!("[OpenGL, medium severity] {}", msg);
+                debug_clone.lock().unwrap().push(format!("[OpenGL, medium severity] {}", msg));
+                println!("[OpenGL, medium severity] {}", msg);
             }
         });
 
@@ -107,11 +99,11 @@ fn main() {
         }))
     );
 
-    let prefab_source = serde_json::from_str(include_str!(
-        "../res/data/prefabs/test_prefab.json"
-    )).unwrap();
-    let prefab_test = prefab::UserPrefab::parse(&prefab_source).unwrap();
-    unsafe { prefab_test.load_resources(&mut texture_bank, &mut mesh_bank, &gl); }
+    // let prefab_source = serde_json::from_str(include_str!(
+    //    "../res/data/prefabs/test_prefab.json"
+    // )).unwrap();
+    // let prefab_test = prefab::UserPrefab::parse(&prefab_source).unwrap();
+    // unsafe { prefab_test.load_resources(&mut world, &mut texture_bank, &mut mesh_bank, &gl); }
 
     unsafe { texture_bank.load_by_name("komari", &gl).unwrap(); }
     let billboard = Model::new(
@@ -139,7 +131,7 @@ fn main() {
         world.insert_model(billboard);
         world.insert_model(door);
         world.insert_model(trigger);
-        world.insert_model(prefab_test.as_model(&mesh_bank));
+        // world.insert_model(prefab_test.as_model(&mesh_bank));
         world.set_internal_brushes(brushes);
         world.set_arrows_visible(false);
         world.move_boxes_far();
@@ -307,7 +299,7 @@ fn main() {
 
                         for line in world.editor_data.show_debug.drain(..) { ui.show_debug(&line); }
                         for line in opengl_debug.lock().unwrap().drain(..) { ui.show_debug(&line); }
-                        ui.render_and_update(&input, &mut texture_bank, &mut program_bank, &gl, &mut world);
+                        ui.render_and_update(&input, &mut texture_bank, &mut mesh_bank, &mut program_bank, &gl, &mut world);
 
                         gl_surface.swap_buffers(&gl_context).unwrap();
 

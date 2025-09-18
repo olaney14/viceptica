@@ -1,8 +1,10 @@
+use std::{fs::File, io::Read, path::Path};
+
 use cgmath::{vec3, Matrix4, Rad};
 use itertools::Itertools;
 use serde_json as json;
 
-use crate::{component::{self, Component, Trigger, TriggerType}, mesh::{flags, MeshBank}, texture::TextureBank, world::{self, Renderable}};
+use crate::{component::{self, Component, Trigger, TriggerType}, mesh::{flags, MeshBank}, texture::TextureBank, world::{self, Renderable, World}};
 
 pub const HIDDEN_DEFAULT: bool = false;
 pub const SOLID_DEFAULT: bool = false;
@@ -348,7 +350,7 @@ impl UserPrefab {
         })
     }
 
-    pub unsafe fn load_resources(&self, textures: &mut TextureBank, meshes: &mut MeshBank, gl: &glow::Context) {
+    pub unsafe fn load_resources(&self, world: &mut World, textures: &mut TextureBank, meshes: &mut MeshBank, gl: &glow::Context) {
         let mut requested_textures = Vec::new();
         let mut requested_meshes = Vec::new();
 
@@ -358,6 +360,7 @@ impl UserPrefab {
                 PrefabRenderable::Raw(Renderable::Mesh(mesh, ..)) => requested_meshes.push(mesh.to_owned()),
                 PrefabRenderable::InsertObj(obj, ..) => {
                     meshes.load_from_obj(obj, gl);
+                    world.loaded_models.push(obj.to_owned());
                 }
                 _ => ()
             }
@@ -365,9 +368,11 @@ impl UserPrefab {
 
         for mesh in requested_meshes.iter() {
             meshes.load_from_obj(mesh, gl);
+            world.loaded_models.push(mesh.to_owned());
         }
 
         for texture in requested_textures.iter() {
+            println!("{}", texture);
             textures.load_by_name(&texture, gl).expect("Could not find texture requested by prefab");
         }
     }
@@ -380,5 +385,18 @@ impl UserPrefab {
         model.solid = self.solid;
         model.components = self.components.clone();
         model
+    }
+}
+
+impl World {
+    pub fn insert_prefab_from_file<P: AsRef<Path>>(&mut self, textures: &mut TextureBank, meshes: &mut MeshBank, gl: &glow::Context, path: P) -> Result<usize, String> {
+        let mut file = File::open(path).map_err(|e| e.to_string())?;
+        let mut data = String::new();
+        file.read_to_string(&mut data).map_err(|e| e.to_string())?;
+        let prefab_source = serde_json::from_str(data.as_str()).map_err(|e| e.to_string())?;
+        let prefab = UserPrefab::parse(&prefab_source)?;
+
+        unsafe { prefab.load_resources(self, textures, meshes, gl); }
+        Ok(self.insert_model(prefab.as_model(meshes)))
     }
 }
