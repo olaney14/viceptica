@@ -43,8 +43,8 @@ fn main() {
                 debug_clone.lock().unwrap().push(format!("[OpenGL, high severity] {}", msg));
                 println!("[OpenGL, high severity] {}", msg);
             } else if severity == glow::DEBUG_SEVERITY_MEDIUM {
-                debug_clone.lock().unwrap().push(format!("[OpenGL, medium severity] {}", msg));
-                println!("[OpenGL, medium severity] {}", msg);
+                //debug_clone.lock().unwrap().push(format!("[OpenGL, medium severity] {}", msg));
+                //println!("[OpenGL, medium severity] {}", msg);
             }
         });
 

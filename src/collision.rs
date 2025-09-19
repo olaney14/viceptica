@@ -136,6 +136,8 @@ impl PhysicalScene {
 
             if let Some(collider) = &self.colliders[i] {
                 if params.respect_solid && !collider.solid { continue; }
+                // Ignore colliders the point is inside of
+                if collider.bounding.contains_local_point(&na::Point3::new(origin.x, origin.y, origin.z)) { continue; }
                 if let Some(intersection) = collider.shape.as_shape().cast_ray_and_get_normal(&collider.iso, &ray, distance, true) {
                     if intersection.time_of_impact < closest_intersection {
                         closest_intersection = intersection.time_of_impact;

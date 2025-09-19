@@ -73,6 +73,16 @@
             "name": "rust",
             "diffuse": "rust",
             "specular": "rust_spec"
+        },
+        {
+            "name": "kabe2",
+            "diffuse": "kabe2",
+            "specular": "kabe2_specular"
+        },
+        {
+            "name": "kabe1",
+            "diffuse": "kabe1",
+            "specular": "kabe1_specular"
         }
     ]
 }
