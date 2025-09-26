@@ -1,0 +1,32 @@
+hide a
+
+character anna { 
+	name: "Kasane Teto"
+	sprites: "teto"
+}
+// comment
+show anna // fade in
+expr a "happy" // set expression (fade to)
+wait // wait for user input
+hide a 
+wait
+enter a left // interp into scene from the left
+
+#main // labels for jumping
+"Narration"
+"Name" "Person speaking"
+a "Hello it is me 重音テト"
+
+choice "Do you want to see my infinite loop?" {
+	"Yes": goto loop_start
+	"No": goto after_loop
+}
+
+#loop_start
+"Yeah welcome to my infinite loop"
+#loop
+"..."
+goto loop
+
+#after_loop
+"... whatever.."

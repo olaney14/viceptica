@@ -13,6 +13,7 @@ mod save;
 mod input;
 mod world;
 mod common;
+mod dialog;
 mod prefab;
 mod render;
 mod shader;
@@ -34,6 +35,15 @@ fn main() {
     let mut ui = ui::implement::VicepticaUI::new(&gl);
     world.scene.ui_vao = Some(ui.inner.vao);
     let opengl_debug = Arc::new(Mutex::new(Vec::new()));
+
+    let tokenizer = dialog::parse::DialogTokenizer::new(include_str!("../res/dialog/dialog_spec.dlg").to_string());
+    let tokens = tokenizer.tokenize();
+    let mut last_line = 1;
+    for token in tokens {
+        if token.line != last_line { println!() }
+        print!("{:?} ", token);
+        last_line = token.line;
+    }
 
     unsafe {
         gl.enable(glow::DEBUG_OUTPUT);
